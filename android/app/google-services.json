@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "570249699188",
+    "project_id": "podcasttracker",
+    "storage_bucket": "podcasttracker.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:570249699188:android:8550bdbc4268b6e6ec9621",
+        "android_client_info": {
+          "package_name": "com.example.podcast_tracker"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "570249699188-dtojgoplkd07kdg4h7spdrocju2iaokj.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBnkuRn7GsExpcg2HcNOQYmSkLHCdozKCg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "570249699188-dtojgoplkd07kdg4h7spdrocju2iaokj.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "570249699188-dcvgoldafbaevu94k3nhboted012m1p6.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.podcastTracker"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,76 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../../providers/podcast_provider.dart';
+import '../../core/services/audio_player_service.dart';
+
+class AllPodcastsScreen extends StatelessWidget {
+  const AllPodcastsScreen({super.key, this.title = 'All Podcasts'});
+
+  final String title;
+
+  Future<void> _playPodcast(BuildContext context, {required String podcastId, required String podcastTitle}) async {
+    final scaffold = ScaffoldMessenger.of(context);
+    final provider = context.read<PodcastProvider>();
+    final audio = context.read<SimpleAudioPlayerService>();
+    try {
+      await provider.getPodcastDetails(podcastId);
+      if (provider.episodes.isEmpty) {
+        scaffold.showSnackBar(const SnackBar(content: Text('No episodes available')));
+        return;
+      }
+      final ep = provider.episodes.first;
+      if (ep.audioUrl.isEmpty) {
+        scaffold.showSnackBar(const SnackBar(content: Text('Episode has no playable audio URL')));
+        return;
+      }
+      await audio.setUrlAndPlay(url: ep.audioUrl, title: ep.title, subtitle: podcastTitle);
+    } catch (e) {
+      scaffold.showSnackBar(SnackBar(content: Text('Failed to play: $e')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = context.watch<PodcastProvider>();
+
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: provider.podcasts.isEmpty
+          ? const Center(child: Text('No podcasts to show'))
+          : ListView.separated(
+              itemCount: provider.podcasts.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (context, index) {
+                final p = provider.podcasts[index];
+                final imageUrl = p.imageUrl.isNotEmpty ? p.imageUrl : 'https://via.placeholder.com/200x200?text=No+Image';
+                return ListTile(
+                  leading: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.network(
+                      imageUrl,
+                      width: 56,
+                      height: 56,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stack) => Container(
+                        width: 56,
+                        height: 56,
+                        color: Colors.grey.shade300,
+                        child: const Icon(Icons.podcasts_rounded),
+                      ),
+                    ),
+                  ),
+                  title: Text(p.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  subtitle: Text(p.publisher, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.play_circle_fill),
+                    onPressed: () => _playPodcast(context, podcastId: p.id, podcastTitle: p.title),
+                  ),
+                  onTap: () => _playPodcast(context, podcastId: p.id, podcastTitle: p.title),
+                );
+              },
+            ),
+    );
+  }
+}
+
+
