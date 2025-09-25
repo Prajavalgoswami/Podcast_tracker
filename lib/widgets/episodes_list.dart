@@ -12,7 +12,6 @@ class EpisodesList extends StatefulWidget {
     required this.episodes,
     this.onRefresh,
     this.onLoadMore,
-    this.onDownload,
     this.onFavorite,
     this.onShare,
     this.enableMock = false,
@@ -21,7 +20,6 @@ class EpisodesList extends StatefulWidget {
   final List<Episode> episodes;
   final Future<void> Function()? onRefresh;
   final Future<List<Episode>> Function(int nextPage)? onLoadMore;
-  final Future<void> Function(Episode episode)? onDownload;
   final Future<void> Function(Episode episode, bool isFavorite)? onFavorite;
   final Future<void> Function(Episode episode)? onShare;
   final bool enableMock;
@@ -60,38 +58,41 @@ class _EpisodesListState extends State<EpisodesList> {
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        _buildSearchAndSortBar(),
-        Expanded(
-          child: RefreshIndicator(
-            onRefresh: _handleRefresh,
-            child: CustomScrollView(
-              controller: _scrollController,
-              slivers: _buildSlivers(context),
-            ),
-          ),
-        ),
+  
+  
+
+
+@override
+Widget build(BuildContext context) {
+  return RefreshIndicator(
+    onRefresh: _handleRefresh,
+    child: CustomScrollView(
+      controller: _scrollController,
+      slivers: [
+        // 🔍 Search + Sort bar (sticks to top)
+        SliverToBoxAdapter(child: _buildSearchAndSortBar()),
+
+        if (_displayed.isEmpty && (_isRefreshing || _isLoadingMore))
+          _buildLoadingSkeletonSliver()
+        else if (_displayed.isEmpty)
+          _buildEmptyStateSliver(context)
+        else ..._buildEpisodeSlivers(context),
+
+        if (_isLoadingMore) _buildLoadingSkeletonSliver(),
+        SliverPadding(padding: EdgeInsets.only(bottom: 80.h)), // space for mini player
       ],
-    );
-  }
+    ),
+  );
+}
 
-  List<Widget> _buildSlivers(BuildContext context) {
-    if (_displayed.isEmpty && (_isRefreshing || _isLoadingMore)) {
-      return [_buildLoadingSkeletonSliver()];
-    }
-    if (_displayed.isEmpty) {
-      return [_buildEmptyStateSliver(context)];
-    }
+List<Widget> _buildEpisodeSlivers(BuildContext context) {
+  final grouped = _groupByDate(_displayed);
+  final slivers = <Widget>[];
 
-    final grouped = _groupByDate(_displayed);
-    final slivers = <Widget>[];
-
-    grouped.forEach((header, episodes) {
-      slivers.add(_StickyHeader(title: header));
-      slivers.add(SliverList(
+  grouped.forEach((header, episodes) {
+    slivers.add(_StickyHeader(title: header));
+    slivers.add(
+      SliverList(
         delegate: SliverChildBuilderDelegate(
           (context, index) {
             final ep = episodes[index];
@@ -99,23 +100,19 @@ class _EpisodesListState extends State<EpisodesList> {
               padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 6.h),
               child: EpisodeCard(
                 episode: ep,
-                onDownload: widget.onDownload,
-                onFavorite: widget.onFavorite,
-                onShare: widget.onShare,
               ),
             );
           },
           childCount: episodes.length,
         ),
-      ));
-    });
+      ),
+    );
+  });
 
-    if (_isLoadingMore) {
-      slivers.add(_buildLoadingSkeletonSliver());
-    }
+  return slivers;
+}
 
-    return slivers;
-  }
+
 
   Widget _buildSearchAndSortBar() {
     return Padding(

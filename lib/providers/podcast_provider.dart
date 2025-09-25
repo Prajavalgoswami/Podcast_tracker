@@ -10,23 +10,38 @@ class PodcastProvider extends ChangeNotifier {
   final LocalStorageService _localStorage = LocalStorageService();
 
   List<Podcast> _podcasts = [];
+  List<Podcast> _trendingPodcasts = [];
   List<Episode> _episodes = [];
   List<Podcast> _favorites = [];
   List<Podcast> _userPodcasts = [];
   List<Episode> _recentEpisodes = [];
   
   bool _isLoading = false;
+  String? _error;
   String _searchQuery = '';
   String _selectedGenre = '';
   String _selectedLanguage = 'en';
 
+  // ====== New for Podcast Detail Screen ======
+  Podcast? _selectedPodcast;
+  Podcast? get selectedPodcast => _selectedPodcast;
+
+  bool _isLoadingDetail = false;
+  bool get isLoadingDetail => _isLoadingDetail;
+
+  String? _detailError;
+  String? get detailError => _detailError;
+  // ==========================================
+
   // Getters
   List<Podcast> get podcasts => _podcasts;
+  List<Podcast> get trendingPodcasts => _trendingPodcasts;
   List<Episode> get episodes => _episodes;
   List<Podcast> get favorites => _favorites;
   List<Podcast> get userPodcasts => _userPodcasts;
   List<Episode> get recentEpisodes => _recentEpisodes;
   bool get isLoading => _isLoading;
+  String? get error => _error;
   String get searchQuery => _searchQuery;
   String get selectedGenre => _selectedGenre;
   String get selectedLanguage => _selectedLanguage;
@@ -58,6 +73,29 @@ class PodcastProvider extends ChangeNotifier {
     }
   }
 
+  // Fetch Trending Podcasts
+  Future<void> fetchTrendingPodcasts() async {
+    _isLoading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      _trendingPodcasts = await _apiService.getBestPodcasts(region: 'us');
+
+      // Save to local storage
+      for (final podcast in _trendingPodcasts) {
+        await _localStorage.savePodcast(podcast);
+      }
+    } catch (e) {
+      debugPrint('Error fetching trending podcasts: $e');
+      _trendingPodcasts = [];
+      _error = e.toString();
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
   // Get Best Podcasts
   Future<void> getBestPodcasts({String? genreId}) async {
     _isLoading = true;
@@ -83,19 +121,26 @@ class PodcastProvider extends ChangeNotifier {
     }
   }
 
-  // Get Podcast Details with Episodes
+  // Get Podcast Details with Episodes (detail-state aware)
   Future<void> getPodcastDetails(String podcastId) async {
-    _isLoading = true;
+    // Keep this for backward compatibility; delegate to new method
+    await fetchPodcastById(podcastId);
+  }
+
+  // New: Explicitly fetch a podcast by ID and store as selected with episodes
+  Future<void> fetchPodcastById(String podcastId) async {
+    _isLoadingDetail = true;
+    _detailError = null;
     notifyListeners();
 
     try {
       final result = await _apiService.getPodcastById(podcastId: podcastId);
       if (result.isNotEmpty) {
-        final podcast = result['podcast'] as Podcast;
+        _selectedPodcast = result['podcast'] as Podcast;
         _episodes = result['episodes'] as List<Episode>;
-        
+
         // Save to local storage
-        await _localStorage.savePodcast(podcast);
+        await _localStorage.savePodcast(_selectedPodcast!);
         for (final episode in _episodes) {
           await _localStorage.saveEpisode(episode);
         }
@@ -103,8 +148,9 @@ class PodcastProvider extends ChangeNotifier {
     } catch (e) {
       debugPrint('Error getting podcast details: $e');
       _episodes = [];
+      _detailError = e.toString();
     } finally {
-      _isLoading = false;
+      _isLoadingDetail = false;
       notifyListeners();
     }
   }
@@ -207,4 +253,6 @@ class PodcastProvider extends ChangeNotifier {
       debugPrint('Error loading recent episodes: $e');
     }
   }
+
+  
 }

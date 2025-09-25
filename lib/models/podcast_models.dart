@@ -397,3 +397,4 @@ class ListeningStats extends HiveObject {
     };
   }
 }
+
