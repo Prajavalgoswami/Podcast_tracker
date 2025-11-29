@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/podcast_provider.dart';
-import '../../core/services/audio_player_service.dart';
+import '../../providers/audio_provider.dart';
 import '../podcast_detail/podcast_detail_screen.dart';
 
 class AllPodcastsScreen extends StatefulWidget {
@@ -25,7 +25,7 @@ class _AllPodcastsScreenState extends State<AllPodcastsScreen> {
       {required String podcastId, required String podcastTitle}) async {
     final scaffold = ScaffoldMessenger.of(context);
     final provider = context.read<PodcastProvider>();
-    final audio = context.read<SimpleAudioPlayerService>();
+    final audio = context.read<AudioProvider>();
 
     try {
       await provider.getPodcastDetails(podcastId);
@@ -38,11 +38,7 @@ class _AllPodcastsScreenState extends State<AllPodcastsScreen> {
         scaffold.showSnackBar(const SnackBar(content: Text('Episode has no playable audio URL')));
         return;
       }
-      await audio.setUrlAndPlay(
-        url: ep.audioUrl,
-        title: ep.title,
-        subtitle: podcastTitle,
-      );
+      await audio.playEpisode(ep);
     } catch (e) {
       scaffold.showSnackBar(SnackBar(content: Text('Failed to play: $e')));
     }

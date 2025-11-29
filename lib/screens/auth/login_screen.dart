@@ -17,6 +17,8 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
+  bool _obscurePassword = true; // Track if password is hidden
+
   @override
   void dispose() {
     _emailController.dispose();
@@ -72,11 +74,21 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: _passwordController,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: 'Password',
-                    border: OutlineInputBorder(),
+                    border: const OutlineInputBorder(),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _obscurePassword = !_obscurePassword;
+                        });
+                      },
+                    ),
                   ),
-                  obscureText: true,
+                  obscureText: _obscurePassword,
                   validator: (v) => (v == null || v.isEmpty) ? 'Password required' : null,
                 ),
                 const SizedBox(height: 16),
@@ -86,10 +98,10 @@ class _LoginScreenState extends State<LoginScreen> {
                     onPressed: isLoading ? null : _handleLogin,
                     child: isLoading
                         ? const SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                          )
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
                         : const Text('Login'),
                   ),
                 ),
@@ -98,11 +110,11 @@ class _LoginScreenState extends State<LoginScreen> {
                   onPressed: isLoading
                       ? null
                       : () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (_) => const SignupScreen()),
-                          );
-                        },
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const SignupScreen()),
+                    );
+                  },
                   child: const Text("Don't have an account? Sign up"),
                 ),
               ],
@@ -113,5 +125,3 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 }
-
-

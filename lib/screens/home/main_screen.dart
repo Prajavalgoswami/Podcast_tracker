@@ -22,11 +22,11 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
-    _tabs = const [
-      HomeScreen(),
-      SearchScreen(),
-      FavoritesScreen(),
-      ProfileScreen(),
+    _tabs = [
+      const HomeScreen(),
+      SearchScreen(onBackPressed: () => switchToTab(0)),
+      const FavoritesScreen(),
+      const ProfileScreen(),
     ];
     _fadeController = AnimationController(
       vsync: this,
@@ -45,6 +45,10 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   }
 
   void _onTap(int index) {
+    switchToTab(index);
+  }
+
+  void switchToTab(int index) {
     if (_currentIndex == index) return;
     _fadeController
       ..reset()
@@ -57,23 +61,15 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(
+      appBar: _currentIndex == 1 ? null : AppBar(
         title: Text(
           switch (_currentIndex) {
             0 => 'Home',
-            1 => 'Search',
             2 => 'Favorites',
             _ => 'Profile',
           },
         ),
         centerTitle: true,
-        actions: [
-          if (_currentIndex == 0)
-            IconButton(
-              icon: const Icon(Icons.notifications_none),
-              onPressed: () {},
-            ),
-        ],
       ),
       body: Stack(
         fit: StackFit.expand,

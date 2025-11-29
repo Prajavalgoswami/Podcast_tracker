@@ -43,10 +43,21 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     
     if (userId != null) {
       setState(() => _isLoading = true);
+      
+      // Sync favorites from Firebase to local storage when user logs in
+      final podcastProvider = context.read<PodcastProvider>();
+      try {
+        // This method syncs Firebase favorites to local storage
+        await podcastProvider.getUserFavorites(userId);
+      } catch (e) {
+        print('Error syncing favorites from Firebase: $e');
+        // Continue with local storage if Firebase fails
+      }
+      
+      // Load from local storage (includes synced favorites)
       final favorites = _localStorage.getUserFavorites(userId);
       
       // Load podcast data for each favorite
-      final podcastProvider = context.read<PodcastProvider>();
       for (final favorite in favorites) {
         if (favorite.itemType == 'podcast' && !_podcastCache.containsKey(favorite.itemId)) {
           try {
@@ -127,6 +138,69 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Removed from favorites')),
       );
+    }
+  }
+
+  void _handleNavigation(Favorite favorite, Podcast? podcast, Episode? episode) {
+    if (favorite.itemType == 'podcast') {
+      if (podcast == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Podcast details are still loading. Please wait...')),
+        );
+        return;
+      }
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PodcastDetailScreen(podcastId: favorite.itemId),
+        ),
+      );
+    } else if (favorite.itemType == 'episode') {
+      if (episode == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Episode data not found. Please try again.')),
+        );
+        return;
+      }
+      if (episode.podcastId.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Invalid episode data. Cannot open podcast.')),
+        );
+        return;
+      }
+      if (podcast == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Podcast details are still loading. Please wait...')),
+        );
+        // Try to load the podcast if not already loaded
+        _loadPodcastForEpisode(episode.podcastId);
+        return;
+      }
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PodcastDetailScreen(podcastId: episode.podcastId),
+        ),
+      );
+    }
+  }
+
+  Future<void> _loadPodcastForEpisode(String podcastId) async {
+    try {
+      final podcastProvider = context.read<PodcastProvider>();
+      await podcastProvider.getPodcastDetails(podcastId);
+      final podcast = podcastProvider.selectedPodcast;
+      if (podcast != null) {
+        await _localStorage.savePodcast(podcast);
+        _podcastCache[podcastId] = podcast;
+        setState(() {}); // Refresh the UI
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading podcast: ${e.toString()}')),
+        );
+      }
     }
   }
 
@@ -291,46 +365,12 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
             ),
             IconButton(
               icon: const Icon(Icons.arrow_forward_ios),
-              onPressed: () {
-                if (favorite.itemType == 'podcast') {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => PodcastDetailScreen(podcastId: favorite.itemId),
-                    ),
-                  );
-                } else if (favorite.itemType == 'episode' && episode != null) {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => PodcastDetailScreen(podcastId: episode.podcastId),
-                    ),
-                  );
-                }
-              },
+              onPressed: () => _handleNavigation(favorite, podcast, episode),
             ),
           ],
         ),
-        onTap: () {
-          if (favorite.itemType == 'podcast') {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => PodcastDetailScreen(podcastId: favorite.itemId),
-              ),
-            );
-          } else if (favorite.itemType == 'episode' && episode != null) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => PodcastDetailScreen(podcastId: episode.podcastId),
-              ),
-            );
-          }
-        },
+        onTap: () => _handleNavigation(favorite, podcast, episode),
       ),
     );
   }
 }
-
-

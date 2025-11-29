@@ -15,6 +15,7 @@ class EpisodesList extends StatefulWidget {
     this.onFavorite,
     this.onShare,
     this.enableMock = false,
+    this.useOverlapInjector = false,
   }) : super(key: key);
 
   final List<Episode> episodes;
@@ -23,6 +24,7 @@ class EpisodesList extends StatefulWidget {
   final Future<void> Function(Episode episode, bool isFavorite)? onFavorite;
   final Future<void> Function(Episode episode)? onShare;
   final bool enableMock;
+  final bool useOverlapInjector;
 
   @override
   State<EpisodesList> createState() => _EpisodesListState();
@@ -64,24 +66,27 @@ class _EpisodesListState extends State<EpisodesList> {
 
 @override
 Widget build(BuildContext context) {
-  return RefreshIndicator(
-    onRefresh: _handleRefresh,
-    child: CustomScrollView(
-      controller: _scrollController,
-      slivers: [
-        // 🔍 Search + Sort bar (sticks to top)
-        SliverToBoxAdapter(child: _buildSearchAndSortBar()),
+  return CustomScrollView(
+    controller: _scrollController,
+    physics: const ClampingScrollPhysics(),
+    slivers: [
+      // Inject the overlap padding from the SliverAppBar above to avoid overlap
+      if (widget.useOverlapInjector)
+        SliverOverlapInjector(
+          handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
+        ),
+      // 🔍 Search + Sort bar (sticks to top)
+      SliverToBoxAdapter(child: _buildSearchAndSortBar()),
 
-        if (_displayed.isEmpty && (_isRefreshing || _isLoadingMore))
-          _buildLoadingSkeletonSliver()
-        else if (_displayed.isEmpty)
-          _buildEmptyStateSliver(context)
-        else ..._buildEpisodeSlivers(context),
+      if (_displayed.isEmpty && (_isRefreshing || _isLoadingMore))
+        _buildLoadingSkeletonSliver()
+      else if (_displayed.isEmpty)
+        _buildEmptyStateSliver(context)
+      else ..._buildEpisodeSlivers(context),
 
-        if (_isLoadingMore) _buildLoadingSkeletonSliver(),
-        SliverPadding(padding: EdgeInsets.only(bottom: 80.h)), // space for mini player
-      ],
-    ),
+      if (_isLoadingMore) _buildLoadingSkeletonSliver(),
+      SliverPadding(padding: EdgeInsets.only(bottom: 80.h)), // space for mini player
+    ],
   );
 }
 
@@ -212,20 +217,7 @@ List<Widget> _buildEpisodeSlivers(BuildContext context) {
     );
   }
 
-  Future<void> _handleRefresh() async {
-    setState(() => _isRefreshing = true);
-    if (widget.onRefresh != null) {
-      await widget.onRefresh!();
-    }
-    setState(() {
-      _displayed = [...widget.episodes];
-      _applySearchFilter();
-      _applySort();
-      _isRefreshing = false;
-      _page = 1;
-      _hasMore = true;
-    });
-  }
+  // Pull-to-refresh removed for NestedScrollView compatibility
 
   void _onScroll() async {
     if (_isLoadingMore || !_hasMore || widget.onLoadMore == null) return;

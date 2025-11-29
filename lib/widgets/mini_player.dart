@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../core/services/audio_player_service.dart';
+import '../providers/audio_provider.dart';
 
 class MiniPlayer extends StatelessWidget {
   const MiniPlayer({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final audio = context.watch<SimpleAudioPlayerService>();
+    final audio = context.watch<AudioProvider>();
     final colorScheme = Theme.of(context).colorScheme;
-    final title = audio.currentTitle.isEmpty ? 'Nothing Playing' : audio.currentTitle;
-    final subtitle = audio.currentSubtitle.isEmpty ? 'Start playback to see controls' : audio.currentSubtitle;
+    final title = audio.currentEpisode?.title ?? 'Nothing Playing';
+    final subtitle = audio.currentPodcast?.title ?? 'Start playback to see controls';
     final position = audio.position;
     final duration = audio.duration ?? Duration.zero;
 
@@ -43,11 +43,7 @@ class MiniPlayer extends StatelessWidget {
                 ),
                 IconButton(
                   onPressed: () async {
-                    if (audio.isPlaying) {
-                      await audio.pause();
-                    } else {
-                      await audio.play();
-                    }
+                    await audio.togglePlayPause();
                   },
                   icon: Icon(audio.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_fill, color: colorScheme.primary),
                 ),

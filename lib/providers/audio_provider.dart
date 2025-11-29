@@ -17,7 +17,7 @@ class AudioProvider extends ChangeNotifier {
   bool _isRepeating = false;
 
   // Getters
-  Episode? get currentEpisode => _audioService.currentEpisode;
+  Episode? get currentEpisode => _currentEpisode;
   Podcast? get currentPodcast => _currentPodcast;
   Duration get position => _audioService.position;
   Duration? get duration => _audioService.duration;
@@ -64,7 +64,8 @@ class AudioProvider extends ChangeNotifier {
       _isLoading = true;
       notifyListeners();
 
-      // Get podcast info
+      // Set current episode and podcast info
+      _currentEpisode = episode;
       _currentPodcast = _localStorage.getPodcast(episode.podcastId);
       
       await _audioService.playEpisode(episode);
@@ -87,7 +88,10 @@ class AudioProvider extends ChangeNotifier {
     _isShuffled = false;
     
     if (episodes.isNotEmpty) {
-      await _audioService.playEpisode(episodes[startIndex], playlist: episodes);
+      final episode = episodes[startIndex];
+      _currentEpisode = episode;
+      _currentPodcast = _localStorage.getPodcast(episode.podcastId);
+      await _audioService.playEpisode(episode, playlist: episodes);
     }
   }
 
@@ -180,6 +184,8 @@ class AudioProvider extends ChangeNotifier {
     _currentEpisode = episode;
     if (episode != null) {
       _currentPodcast = _localStorage.getPodcast(episode.podcastId);
+    } else {
+      _currentPodcast = null;
     }
     notifyListeners();
   }

@@ -35,14 +35,18 @@ void main() async {
   // Initialize providers
   final themeProvider = ThemeProvider();
   await themeProvider.initialize();
+  
+  final audioProvider = AudioProvider();
+  await audioProvider.initialize();
 
-  runApp(MyApp(themeProvider: themeProvider));
+  runApp(MyApp(themeProvider: themeProvider, audioProvider: audioProvider));
 }
 
 class MyApp extends StatelessWidget {
   final ThemeProvider themeProvider;
+  final AudioProvider audioProvider;
   
-  const MyApp({super.key, required this.themeProvider});
+  const MyApp({super.key, required this.themeProvider, required this.audioProvider});
 
   @override
   Widget build(BuildContext context) {
@@ -55,12 +59,14 @@ class MyApp extends StatelessWidget {
           providers: [
             ChangeNotifierProvider(create: (_) => AuthProvider()),
             ChangeNotifierProvider(create: (_) => PodcastProvider()),
-            ChangeNotifierProvider(create: (_) => AudioProvider()),
-            ChangeNotifierProvider(create: (_) => SimpleAudioPlayerService()),
+            ChangeNotifierProvider.value(value: audioProvider),
             ChangeNotifierProvider.value(value: themeProvider),
           ],
           child: Consumer2<AuthProvider, ThemeProvider>(
             builder: (context, authProvider, themeProvider, _) {
+              // Set audio provider reference for auto-pause on logout
+              authProvider.setAudioProvider(audioProvider);
+              
               return MaterialApp(
                 title: 'Podcast Tracker',
                 debugShowCheckedModeBanner: false,

@@ -1,8 +1,17 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import '../../providers/podcast_provider.dart';
+import '../../core/services/local_storage_service.dart';
+import '../../core/services/api_services.dart';
+import '../../models/podcast_models.dart';
+import '../podcast_detail/podcast_detail_screen.dart';
 
 class SearchScreen extends StatefulWidget {
-  const SearchScreen({super.key});
+  final VoidCallback? onBackPressed;
+  
+  const SearchScreen({super.key, this.onBackPressed});
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
@@ -15,9 +24,12 @@ class _SearchScreenState extends State<SearchScreen> {
   Timer? _debounce;
   bool _isLoading = false;
   bool _showSuggestions = false;
-  List<String> _recentSearches = ['AI podcasts', 'Business news', 'Health tips'];
+  final LocalStorageService _localStorage = LocalStorageService();
+  final ApiService _api = ApiService();
+  List<String> _recentSearches = [];
   List<String> _suggestions = [];
-  List<_PodcastResult> _results = [];
+  List<Podcast> _results = [];
+  List<Podcast> _allPodcasts = []; // All available podcasts for client-side filtering
 
   // Filters
   String? _selectedCategory; // e.g., Technology, Business, Health
@@ -28,6 +40,27 @@ class _SearchScreenState extends State<SearchScreen> {
   void initState() {
     super.initState();
     _searchController.addListener(_onSearchChanged);
+    // Load persisted search history
+    _recentSearches = _localStorage.getSearchHistory();
+    // Load initial podcasts for client-side filtering
+    _loadInitialPodcasts();
+  }
+
+  Future<void> _loadInitialPodcasts() async {
+    try {
+      // Load trending podcasts as initial dataset
+      await context.read<PodcastProvider>().fetchTrendingPodcasts();
+      final provider = context.read<PodcastProvider>();
+      setState(() {
+        _allPodcasts = List.from(provider.trendingPodcasts);
+        // Also try to get regular podcasts if available
+        if (provider.podcasts.isNotEmpty) {
+          _allPodcasts.addAll(provider.podcasts);
+        }
+      });
+    } catch (e) {
+      print('Error loading initial podcasts: $e');
+    }
   }
 
   @override
@@ -42,57 +75,63 @@ class _SearchScreenState extends State<SearchScreen> {
     final query = _searchController.text.trim();
     setState(() => _showSuggestions = query.isNotEmpty);
 
+    // Apply client-side filtering immediately (like episodes list)
+    _applyClientSideFilter(query);
+
+    // Also do API search with debounce for more results
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 500), () {
       if (!mounted) return;
-      _performSearch(query);
+      _performApiSearch(query);
       _loadSuggestions(query);
     });
   }
 
-  Future<void> _performSearch(String query) async {
+  // Client-side filtering (immediate, like episodes list)
+  void _applyClientSideFilter(String query) {
     if (query.isEmpty) {
       setState(() => _results = []);
       return;
     }
-    setState(() => _isLoading = true);
-    // Simulate network search
-    await Future.delayed(const Duration(milliseconds: 700));
 
-    // Mock results filtered by simple contains and filters
-    final all = List.generate(12, (i) => _PodcastResult(
-      thumbnailUrl: 'https://picsum.photos/seed/s$i/200/200',
-      title: 'Podcast about $query #$i',
-      creator: i % 2 == 0 ? 'Creator Alpha' : 'Creator Beta',
-      durationMinutes: 10 + i * 5,
-      rating: 3.5 + (i % 5) * 0.3,
-      category: ['Technology','Business','Health','Education'][i % 4],
-      date: DateTime.now().subtract(Duration(days: i * 3)),
-    ));
-
-    List<_PodcastResult> filtered = all
-        .where((p) => p.title.toLowerCase().contains(query.toLowerCase()))
-        .toList();
-
-    if (_selectedCategory != null) {
-      filtered = filtered.where((p) => p.category == _selectedCategory).toList();
-    }
-    filtered = filtered
-        .where((p) => p.durationMinutes >= _durationRange.start && p.durationMinutes <= _durationRange.end)
-        .toList();
-    if (_dateRange != null) {
-      filtered = filtered.where((p) => p.date.isAfter(_dateRange!.start) && p.date.isBefore(_dateRange!.end)).toList();
-    }
-
+    final q = query.toLowerCase();
     setState(() {
-      _results = filtered;
-      _isLoading = false;
-      if (query.isNotEmpty) {
-        _recentSearches.remove(query);
-        _recentSearches.insert(0, query);
-        if (_recentSearches.length > 10) _recentSearches = _recentSearches.sublist(0, 10);
-      }
+      _results = _allPodcasts.where((p) {
+        return p.title.toLowerCase().contains(q) ||
+               p.publisher.toLowerCase().contains(q) ||
+               p.description.toLowerCase().contains(q) ||
+               p.genres.any((genre) => genre.toLowerCase().contains(q));
+      }).toList();
     });
+  }
+
+  // API search (with debounce, for more comprehensive results)
+  Future<void> _performApiSearch(String query) async {
+    if (query.isEmpty) {
+      return;
+    }
+
+    try {
+      // Use provider to fetch real podcasts from API
+      await context.read<PodcastProvider>().searchPodcasts(query);
+      final fetched = context.read<PodcastProvider>().podcasts;
+
+      // Merge API results with existing results (avoid duplicates)
+      final existingIds = _results.map((p) => p.id).toSet();
+      final newResults = fetched.where((p) => !existingIds.contains(p.id)).toList();
+
+      setState(() {
+        _allPodcasts.addAll(newResults); // Add to all podcasts for future filtering
+        _results.addAll(newResults); // Add to current results
+      });
+
+      // Persist search history
+      await _localStorage.addToSearchHistory(query);
+      setState(() => _recentSearches = _localStorage.getSearchHistory());
+    } catch (e) {
+      // Silently fail - client-side filtering still works
+      print('API search error: $e');
+    }
   }
 
   Future<void> _loadSuggestions(String query) async {
@@ -100,37 +139,26 @@ class _SearchScreenState extends State<SearchScreen> {
       setState(() => _suggestions = []);
       return;
     }
-    // Simulate suggestion fetch
-    await Future.delayed(const Duration(milliseconds: 200));
-    setState(() {
-      _suggestions = List.generate(5, (i) => '$query suggestion ${i + 1}');
-    });
-  }
-
-  void _openFilters() async {
-    final result = await showModalBottomSheet<_FiltersResult>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (context) => _FiltersSheet(
-        initialCategory: _selectedCategory,
-        initialDuration: _durationRange,
-        initialDateRange: _dateRange,
-      ),
-    );
-    if (result != null) {
-      setState(() {
-        _selectedCategory = result.category;
-        _durationRange = result.duration;
-        _dateRange = result.dateRange;
-      });
-      // Re-run search with new filters
-      _performSearch(_searchController.text.trim());
+    try {
+      final trending = await _api.getTrendingSearches();
+      final fromHistory = _recentSearches
+          .where((s) => s.toLowerCase().contains(query.toLowerCase()))
+          .toList();
+      final merged = {
+        ...fromHistory,
+        ...trending.where((s) => s.toLowerCase().contains(query.toLowerCase())),
+      }.toList();
+      setState(() => _suggestions = merged.take(8).toList());
+    } catch (_) {
+      setState(() => _suggestions = []);
     }
   }
 
+  // Filters UI removed; keep state for future use if needed
+
   void _clearHistory() {
-    setState(() => _recentSearches.clear());
+    _localStorage.clearSearchHistory();
+    setState(() => _recentSearches = []);
   }
 
   @override
@@ -141,6 +169,18 @@ class _SearchScreenState extends State<SearchScreen> {
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 0,
+        automaticallyImplyLeading: false,
+        leading: widget.onBackPressed != null
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: widget.onBackPressed,
+              )
+            : (Navigator.of(context).canPop()
+                ? IconButton(
+                    icon: const Icon(Icons.arrow_back),
+                    onPressed: () => Navigator.of(context).pop(),
+                  )
+                : null),
         title: _SearchBar(
           controller: _searchController,
           focusNode: _focusNode,
@@ -152,14 +192,6 @@ class _SearchScreenState extends State<SearchScreen> {
             });
           },
         ),
-        actions: [
-          IconButton(
-            tooltip: 'Filters',
-            icon: const Icon(Icons.tune_rounded),
-            onPressed: _openFilters,
-          ),
-          const SizedBox(width: 4),
-        ],
       ),
       body: Stack(
         children: [
@@ -202,13 +234,15 @@ class _SearchScreenState extends State<SearchScreen> {
                   onPressed: () {
                     _searchController.text = term;
                     _searchController.selection = TextSelection.fromPosition(TextPosition(offset: term.length));
-                    _performSearch(term);
+                    _applyClientSideFilter(term);
+                    _performApiSearch(term);
                   },
                 ),
                 onTap: () {
                   _searchController.text = term;
                   _searchController.selection = TextSelection.fromPosition(TextPosition(offset: term.length));
-                  _performSearch(term);
+                  _applyClientSideFilter(term);
+                  _performApiSearch(term);
                 },
               );
             },
@@ -231,26 +265,63 @@ class _SearchScreenState extends State<SearchScreen> {
       separatorBuilder: (_, __) => const Divider(height: 1),
       itemBuilder: (context, index) {
         final p = _results[index];
+        final title = p.title.isNotEmpty ? p.title : 'Untitled Podcast';
+        final publisher = p.publisher.isNotEmpty ? p.publisher : 'Unknown Publisher';
+        
         return ListTile(
           contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           leading: ClipRRect(
             borderRadius: BorderRadius.circular(8),
-            child: Image.network(p.thumbnailUrl, width: 56, height: 56, fit: BoxFit.cover),
+            child: p.imageUrl.isNotEmpty
+                ? CachedNetworkImage(
+                    imageUrl: p.imageUrl,
+                    width: 56,
+                    height: 56,
+                    fit: BoxFit.cover,
+                    placeholder: (context, url) => Container(
+                      width: 56,
+                      height: 56,
+                      color: theme.colorScheme.surfaceVariant,
+                      child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                    ),
+                    errorWidget: (context, url, error) => Container(
+                      width: 56,
+                      height: 56,
+                      color: theme.colorScheme.surfaceVariant,
+                      child: Icon(Icons.podcasts_rounded, color: theme.colorScheme.onSurfaceVariant),
+                    ),
+                  )
+                : Container(
+                    width: 56,
+                    height: 56,
+                    color: theme.colorScheme.surfaceVariant,
+                    child: Icon(Icons.podcasts_rounded, color: theme.colorScheme.onSurfaceVariant),
+                  ),
           ),
-          title: Text(p.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-          subtitle: Row(
-            children: [
-              Expanded(child: Text(p.creator, maxLines: 1, overflow: TextOverflow.ellipsis)),
-              const SizedBox(width: 8),
-              const Icon(Icons.schedule, size: 14),
-              const SizedBox(width: 2),
-              Text('${p.durationMinutes}m'),
-              const SizedBox(width: 8),
-              const Icon(Icons.star_rate_rounded, size: 16, color: Colors.amber),
-              Text(p.rating.toStringAsFixed(1)),
-            ],
+          title: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+              color: theme.colorScheme.onSurface,
+            ),
           ),
-          onTap: () {},
+          subtitle: Text(
+            publisher,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => PodcastDetailScreen(podcastId: p.id),
+              ),
+            );
+          },
         );
       },
     );
@@ -280,7 +351,8 @@ class _SearchScreenState extends State<SearchScreen> {
                   _searchController.text = s;
                   _searchController.selection = TextSelection.fromPosition(TextPosition(offset: s.length));
                   setState(() => _showSuggestions = false);
-                  _performSearch(s);
+                  _applyClientSideFilter(s);
+                  _performApiSearch(s);
                 },
               );
             },
@@ -495,26 +567,4 @@ class _FiltersResult {
   final DateTimeRange? dateRange;
   _FiltersResult({required this.category, required this.duration, required this.dateRange});
 }
-
-class _PodcastResult {
-  final String thumbnailUrl;
-  final String title;
-  final String creator;
-  final int durationMinutes;
-  final double rating;
-  final String category;
-  final DateTime date;
-
-  _PodcastResult({
-    required this.thumbnailUrl,
-    required this.title,
-    required this.creator,
-    required this.durationMinutes,
-    required this.rating,
-    required this.category,
-    required this.date,
-  });
-}
-
-
 

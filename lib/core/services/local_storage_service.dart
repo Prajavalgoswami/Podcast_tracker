@@ -28,13 +28,44 @@ class LocalStorageService {
     Hive.registerAdapter(FavoriteAdapter());
     Hive.registerAdapter(ListeningStatsAdapter());
 
-    // Open boxes
-    _userBox = await Hive.openBox<UserProfile>('users');
-    _podcastBox = await Hive.openBox<Podcast>('podcasts');
-    _episodeBox = await Hive.openBox<Episode>('episodes');
-    _progressBox = await Hive.openBox<ListeningProgress>('progress');
-    _favoriteBox = await Hive.openBox<Favorite>('favorites');
-    _statsBox = await Hive.openBox<ListeningStats>('stats');
+    // Helper function to safely open a box, deleting it if corrupted
+    Future<Box<T>> _safeOpenBox<T>(String boxName) async {
+      try {
+        // Try to open the box
+        return await Hive.openBox<T>(boxName);
+      } catch (e) {
+        print('Error opening box $boxName, deleting from disk: $e');
+        // If opening fails, delete the box from disk
+        try {
+          await Hive.deleteBoxFromDisk(boxName);
+          print('Deleted $boxName box from disk');
+        } catch (deleteError) {
+          print('Error deleting $boxName box: $deleteError');
+          // Try to close if it's open
+          try {
+            if (Hive.isBoxOpen(boxName)) {
+              await Hive.box(boxName).close();
+              await Hive.deleteBoxFromDisk(boxName);
+            }
+          } catch (_) {
+            // Ignore errors
+          }
+        }
+        // Open a fresh box
+        return await Hive.openBox<T>(boxName);
+      }
+    }
+
+    // Open all boxes with error handling
+    _userBox = await _safeOpenBox<UserProfile>('users');
+    _podcastBox = await _safeOpenBox<Podcast>('podcasts');
+    _episodeBox = await _safeOpenBox<Episode>('episodes');
+    _progressBox = await _safeOpenBox<ListeningProgress>('progress');
+    _favoriteBox = await _safeOpenBox<Favorite>('favorites');
+    _statsBox = await _safeOpenBox<ListeningStats>('stats');
+    
+    // Clean up any corrupted entries after opening (in case some got through)
+    _cleanupCorruptedEntries();
 
     // Initialize SharedPreferences
     _prefs = await SharedPreferences.getInstance();
@@ -46,7 +77,18 @@ class LocalStorageService {
   }
 
   UserProfile? getUserProfile(String uid) {
-    return _userBox.get(uid);
+    try {
+      return _userBox.get(uid);
+    } catch (e) {
+      print('Error reading user profile $uid: $e');
+      // Delete corrupted entry
+      try {
+        _userBox.delete(uid);
+      } catch (_) {
+        // Ignore deletion errors
+      }
+      return null;
+    }
   }
 
   Future<void> deleteUserProfile(String uid) async {
@@ -59,11 +101,39 @@ class LocalStorageService {
   }
 
   Podcast? getPodcast(String id) {
-    return _podcastBox.get(id);
+    try {
+      return _podcastBox.get(id);
+    } catch (e) {
+      print('Error getting podcast $id: $e');
+      return null;
+    }
   }
 
   List<Podcast> getAllPodcasts() {
-    return _podcastBox.values.toList();
+    try {
+      final podcasts = <Podcast>[];
+      for (final key in _podcastBox.keys) {
+        try {
+          final podcast = _podcastBox.get(key);
+          if (podcast != null) {
+            podcasts.add(podcast);
+          }
+        } catch (e) {
+          // Skip corrupted entries
+          print('Error reading podcast $key: $e');
+          // Delete corrupted entry
+          try {
+            _podcastBox.delete(key);
+          } catch (_) {
+            // Ignore deletion errors
+          }
+        }
+      }
+      return podcasts;
+    } catch (e) {
+      print('Error getting all podcasts: $e');
+      return [];
+    }
   }
 
   Future<void> deletePodcast(String id) async {
@@ -76,13 +146,39 @@ class LocalStorageService {
   }
 
   Episode? getEpisode(String id) {
-    return _episodeBox.get(id);
+    try {
+      return _episodeBox.get(id);
+    } catch (e) {
+      print('Error getting episode $id: $e');
+      return null;
+    }
   }
 
   List<Episode> getEpisodesByPodcast(String podcastId) {
-    return _episodeBox.values
-        .where((episode) => episode.podcastId == podcastId)
-        .toList();
+    try {
+      final episodes = <Episode>[];
+      for (final key in _episodeBox.keys) {
+        try {
+          final episode = _episodeBox.get(key);
+          if (episode != null && episode.podcastId == podcastId) {
+            episodes.add(episode);
+          }
+        } catch (e) {
+          // Skip corrupted entries
+          print('Error reading episode $key: $e');
+          // Delete corrupted entry
+          try {
+            _episodeBox.delete(key);
+          } catch (_) {
+            // Ignore deletion errors
+          }
+        }
+      }
+      return episodes;
+    } catch (e) {
+      print('Error getting episodes by podcast: $e');
+      return [];
+    }
   }
 
   Future<void> deleteEpisode(String id) async {
@@ -101,10 +197,31 @@ class LocalStorageService {
   }
 
   List<ListeningProgress> getUserProgress(String userId) {
-    return _progressBox.values
-        .where((progress) => progress.userId == userId)
-        .toList()
-      ..sort((a, b) => b.lastListened.compareTo(a.lastListened));
+    try {
+      final progressList = <ListeningProgress>[];
+      for (final key in _progressBox.keys) {
+        try {
+          final progress = _progressBox.get(key);
+          if (progress != null && progress.userId == userId) {
+            progressList.add(progress);
+          }
+        } catch (e) {
+          // Skip corrupted entries
+          print('Error reading progress $key: $e');
+          // Delete corrupted entry
+          try {
+            _progressBox.delete(key);
+          } catch (_) {
+            // Ignore deletion errors
+          }
+        }
+      }
+      progressList.sort((a, b) => b.lastListened.compareTo(a.lastListened));
+      return progressList;
+    } catch (e) {
+      print('Error getting user progress: $e');
+      return [];
+    }
   }
 
   Future<void> deleteListeningProgress(String userId, String episodeId) async {
@@ -122,15 +239,59 @@ class LocalStorageService {
   }
 
   List<Favorite> getUserFavorites(String userId) {
-    return _favoriteBox.values
-        .where((favorite) => favorite.userId == userId)
-        .toList()
-      ..sort((a, b) => b.addedAt.compareTo(a.addedAt));
+    try {
+      final favorites = <Favorite>[];
+      for (final key in _favoriteBox.keys) {
+        try {
+          final favorite = _favoriteBox.get(key);
+          if (favorite != null && favorite.userId == userId) {
+            favorites.add(favorite);
+          }
+        } catch (e) {
+          // Skip corrupted entries
+          print('Error reading favorite $key: $e');
+          // Delete corrupted entry
+          try {
+            _favoriteBox.delete(key);
+          } catch (_) {
+            // Ignore deletion errors
+          }
+        }
+      }
+      favorites.sort((a, b) => b.addedAt.compareTo(a.addedAt));
+      return favorites;
+    } catch (e) {
+      print('Error getting user favorites: $e');
+      return [];
+    }
   }
 
   bool isFavorite(String userId, String itemId) {
-    return _favoriteBox.values.any((favorite) =>
-        favorite.userId == userId && favorite.itemId == itemId);
+    try {
+      for (final key in _favoriteBox.keys) {
+        try {
+          final favorite = _favoriteBox.get(key);
+          if (favorite != null && 
+              favorite.userId == userId && 
+              favorite.itemId == itemId) {
+            return true;
+          }
+        } catch (e) {
+          // Skip corrupted entries
+          print('Error reading favorite $key: $e');
+          // Delete corrupted entry
+          try {
+            _favoriteBox.delete(key);
+          } catch (_) {
+            // Ignore deletion errors
+          }
+        }
+      }
+      return false;
+    } catch (e) {
+      print('Error checking favorite: $e');
+      return false;
+    }
   }
 
   // Listening Stats Operations
@@ -265,22 +426,98 @@ class LocalStorageService {
 
   // Clear all data (for logout)
   Future<void> clearAllData() async {
-    await _userBox.clear();
-    await _podcastBox.clear();
-    await _episodeBox.clear();
-    await _progressBox.clear();
-    await _favoriteBox.clear();
-    await _statsBox.clear();
-    await _prefs.clear();
+    try {
+      // Safely clear all boxes if they are initialized
+      // Note: We preserve favorites and podcasts/episodes for offline access
+      // Favorites will be synced from Firebase on next login
+      await _safeClearBox(() => _userBox);
+      // Keep podcasts and episodes for offline access
+      // await _safeClearBox(() => _podcastBox);
+      // await _safeClearBox(() => _episodeBox);
+      await _safeClearBox(() => _progressBox);
+      // Don't clear favorites - they're synced from Firebase on login
+      // await _safeClearBox(() => _favoriteBox);
+      await _safeClearBox(() => _statsBox);
+      await _prefs.clear();
+    } catch (e) {
+      print('Error in clearAllData: $e');
+      // If boxes aren't initialized, just clear SharedPreferences
+      try {
+        await _prefs.clear();
+      } catch (e2) {
+        print('Error clearing SharedPreferences: $e2');
+      }
+    }
+  }
+
+  // Helper method to safely clear a box
+  Future<void> _safeClearBox<T>(Box<T> Function() getBox) async {
+    try {
+      final box = getBox();
+      if (box.isOpen) {
+        await box.clear();
+      }
+    } catch (e) {
+      // Box might not be initialized, ignore
+    }
+  }
+
+
+  // Clean up corrupted entries from all boxes
+  void _cleanupCorruptedEntries() {
+    try {
+      // Helper to safely clean a box
+      void cleanBox<T>(Box<T> box, String boxName) {
+        try {
+          final keys = box.keys.toList();
+          for (final key in keys) {
+            try {
+              box.get(key);
+            } catch (e) {
+              print('Removing corrupted $boxName entry: $key');
+              try {
+                box.delete(key);
+              } catch (_) {
+                // Ignore deletion errors
+              }
+            }
+          }
+        } catch (e) {
+          print('Error cleaning $boxName box: $e');
+        }
+      }
+      
+      // Clean all boxes
+      cleanBox(_userBox, 'user');
+      cleanBox(_podcastBox, 'podcast');
+      cleanBox(_episodeBox, 'episode');
+      cleanBox(_progressBox, 'progress');
+      cleanBox(_favoriteBox, 'favorite');
+      cleanBox(_statsBox, 'stats');
+    } catch (e) {
+      print('Error during cleanup: $e');
+    }
   }
 
   // Close all boxes (call when app is closing)
   Future<void> close() async {
-    await _userBox.close();
-    await _podcastBox.close();
-    await _episodeBox.close();
-    await _progressBox.close();
-    await _favoriteBox.close();
-    await _statsBox.close();
+    // Helper function to safely close a box
+    Future<void> safeCloseBox<T>(Box<T> Function() getBox) async {
+      try {
+        final box = getBox();
+        if (box.isOpen) {
+          await box.close();
+        }
+      } catch (e) {
+        // Box might not be initialized, ignore
+      }
+    }
+
+    await safeCloseBox(() => _userBox);
+    await safeCloseBox(() => _podcastBox);
+    await safeCloseBox(() => _episodeBox);
+    await safeCloseBox(() => _progressBox);
+    await safeCloseBox(() => _favoriteBox);
+    await safeCloseBox(() => _statsBox);
   }
 }

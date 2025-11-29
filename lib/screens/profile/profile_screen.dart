@@ -5,6 +5,7 @@ import '../../providers/auth_provider.dart';
 import '../../providers/theme_provider.dart';
 import 'edit_profile_screen.dart';
 import '../../core/services/local_storage_service.dart';
+import '../auth/login_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -20,10 +21,7 @@ class ProfileScreen extends StatelessWidget {
     final String userId = auth.user?.uid ?? '';
     final storage = LocalStorageService();
     final favoritesCount = userId.isEmpty ? 0 : storage.getUserFavorites(userId).length;
-    final totalTime = userId.isEmpty
-        ? '0m'
-        : (storage.getListeningStats(userId)?.formattedTotalTime ?? '0m');
-    // Following feature is not implemented yet.
+    // Removed Total Listened and Following tiles
 
     return Scaffold(
       body: SafeArea(
@@ -88,15 +86,7 @@ class ProfileScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(child: _StatCard(label: 'Total Listened', value: totalTime, icon: Icons.headphones)),
-                  const SizedBox(width: 12),
-                  Expanded(child: _StatCard(label: 'Favorites', value: favoritesCount.toString(), icon: Icons.favorite)),
-                  const SizedBox(width: 12),
-                  const Expanded(child: _StatCard(label: 'Following', value: '0', icon: Icons.person_add_alt)),
-                ],
-              ),
+              _StatCard(label: 'Favorites', value: favoritesCount.toString(), icon: Icons.favorite),
               const SizedBox(height: 16),
               _SectionCard(
                 title: 'Account Settings',
@@ -112,46 +102,12 @@ class ProfileScreen extends StatelessWidget {
                       );
                     },
                   ),
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(Icons.lock_outline),
-                    title: const Text('Change Password'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () {
-                      if (auth.user?.email != null) {
-                        showDialog(
-                          context: context,
-                          builder: (context) => AlertDialog(
-                            title: const Text('Reset password?'),
-                            content: Text('We will send a reset link to ${auth.user!.email}'),
-                            actions: [
-                              TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-                              FilledButton(
-                                onPressed: () async {
-                                  Navigator.pop(context);
-                                  await auth.resetPassword(auth.user!.email!);
-                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Password reset email sent')));
-                                },
-                                child: const Text('Send'),
-                              ),
-                            ],
-                          ),
-                        );
-                      }
-                    },
-                  ),
                 ],
               ),
               const SizedBox(height: 12),
               _SectionCard(
                 title: 'App Settings',
                 children: [
-                  SwitchListTile(
-                    secondary: const Icon(Icons.notifications_none),
-                    title: const Text('Notifications'),
-                    value: true,
-                    onChanged: (_) {},
-                  ),
                   const Divider(height: 1),
                   ListTile(
                     leading: const Icon(Icons.brightness_6_outlined),
@@ -166,24 +122,6 @@ class ProfileScreen extends StatelessWidget {
                       );
                       if (mode != null) {
                         await themeProvider.setThemeMode(mode);
-                      }
-                    },
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(Icons.language),
-                    title: const Text('Language'),
-                    subtitle: Text(themeProvider.getLanguageName(themeProvider.selectedLanguage)),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () async {
-                      final code = await showModalBottomSheet<String>(
-                        context: context,
-                        showDragHandle: true,
-                        builder: (context) => _LanguageSheet(),
-                      );
-                      if (code != null) {
-                        await themeProvider.setLanguage(code);
-                        await context.read<AuthProvider>().changeLanguage(code);
                       }
                     },
                   ),
@@ -232,6 +170,16 @@ class ProfileScreen extends StatelessWidget {
                     );
                     if (confirm == true) {
                       await context.read<AuthProvider>().signOut();
+                      if (context.mounted) {
+                        // Use rootNavigator to ensure we navigate from the root
+                        // Clear all routes and navigate to login screen
+                        Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+                          MaterialPageRoute(
+                            builder: (_) => const LoginScreen(),
+                          ),
+                          (route) => false,
+                        );
+                      }
                     }
                   },
                 ),

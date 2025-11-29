@@ -80,12 +80,14 @@ class PodcastAdapter extends TypeAdapter<Podcast> {
       website: fields[8] as String?,
       isUserUploaded: fields[9] as bool,
       uploadedByUserId: fields[10] as String?,
+      thumbnailUrl: fields[11] as String,
     );
   }
 
   @override
   void write(BinaryWriter writer, Podcast obj) {
     writer
+      ..writeByte(12)
       ..writeByte(11)
       ..writeByte(0)
       ..write(obj.id)

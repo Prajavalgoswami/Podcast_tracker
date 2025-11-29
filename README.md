@@ -1,16 +1,77 @@
-# podcast_tracker
+# 🎙️ Podcast Tracker
 
-A new Flutter project.
+A feature-rich Flutter application for discovering, streaming, and managing your favorite podcasts. Built with ❤️ using Flutter and Firebase.
 
-## Getting Started
+## 🌟 Features
 
-This project is a starting point for a Flutter application.
+### 🎧 Podcast Discovery & Streaming
+- Browse trending and popular podcasts
+- Search for specific podcasts or episodes
+- Stream episodes directly in the app
+- Background audio playback
+- Playback speed control
 
-A few resources to get you started if this is your first Flutter project:
+### 🔐 User Authentication
+- Email/Password sign up & login
+- Secure user profiles
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+### 💾 Offline Listening
+- Background audio support
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+### ❤️ Personalization
+- Create and manage favorites
+- Subscribe to podcasts
+- View listening history
+- Personalized recommendations
+
+### 🎨 Beautiful UI/UX
+- Modern, intuitive interface
+- Dark/Light theme support
+- Smooth animations and transitions
+- Responsive design for all screen sizes
+
+## 🛠 Tech Stack
+
+- **Framework**: Flutter
+- **State Management**: Provider
+- **Backend**: Firebase (Authentication, Firestore, Storage)
+- **Audio Playback**: just_audio
+- **Local Storage**: Hive
+- **Networking**: Dio & http
+- **UI Components**: Custom widgets with Flutter
+
+
+
+## 🚀 Getting Started
+
+### Prerequisites
+- Flutter SDK (latest stable version)
+- Android Studio / Xcode (for emulator/simulator)
+- Firebase account (for backend services)
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/Prajavalgoswami/Podcast_tracker
+   cd podcast_tracker
+   ```
+
+2. **Get dependencies**
+   ```bash
+   flutter pub get
+   ```
+
+3. **Set up Firebase**
+   - Create a new Firebase project
+   - Add Android and iOS apps to your Firebase project
+   - Download the configuration files and place them in the correct locations:
+     - `android/app/google-services.json`
+     - `ios/Runner/GoogleService-Info.plist`
+
+4. **Run the app**
+   ```bash
+   flutter run
+   ```
+
+

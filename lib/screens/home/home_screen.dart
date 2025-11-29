@@ -1,11 +1,13 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 import '../../providers/podcast_provider.dart';
-import '../../core/services/audio_player_service.dart';
+import '../../providers/audio_provider.dart';
 import 'all_podcasts_screen.dart';
 import '../podcast_detail/podcast_detail_screen.dart';
+
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -15,11 +17,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final List<String> _categories = const [
-    'Technology', 'Business', 'Health', 'Education', 'Entertainment', 'Science', 'Sports', 'Lifestyle'
-  ];
-  
-  int _selectedCategoryIndex = 0;
+ 
   @override
   void initState() {
     super.initState();
@@ -35,7 +33,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _playPodcast(BuildContext context, {required String podcastId, required String podcastTitle, String? podcastImage}) async {
     final scaffold = ScaffoldMessenger.of(context);
     final podcasts = context.read<PodcastProvider>();
-    final audio = context.read<SimpleAudioPlayerService>();
+    final audio = context.read<AudioProvider>();
     try {
       await podcasts.getPodcastDetails(podcastId);
       if (podcasts.episodes.isEmpty) {
@@ -47,11 +45,7 @@ class _HomeScreenState extends State<HomeScreen> {
         scaffold.showSnackBar(const SnackBar(content: Text('Episode has no playable audio URL')));
         return;
       }
-      await audio.setUrlAndPlay(
-        url: ep.audioUrl,
-        title: ep.title,
-        subtitle: podcastTitle,
-      );
+      await audio.playEpisode(ep);
     } catch (e) {
       scaffold.showSnackBar(SnackBar(content: Text('Failed to play: $e')));
     }
@@ -69,53 +63,108 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 12.h),
-              child: _buildCategories(theme),
-            ),
+
             _buildSectionHeader('Trending Podcasts'),
             Consumer<PodcastProvider>(
               builder: (context, provider, _) {
+                // Show loading state
                 if (provider.isLoading && provider.trendingPodcasts.isEmpty) {
                   return SizedBox(height: 210.h, child: _buildTrendingShimmers());
                 }
+                
+                // Show error state
                 if ((provider.error ?? '').isNotEmpty && provider.trendingPodcasts.isEmpty) {
-                  return Center(child: Text(provider.error!));
+                  return Padding(
+                    padding: EdgeInsets.all(16.w),
+                    child: Center(
+                      child: Column(
+                        children: [
+                          Text(provider.error!, style: theme.textTheme.bodyMedium),
+                          SizedBox(height: 8.h),
+                          TextButton(
+                            onPressed: () => provider.fetchTrendingPodcasts(),
+                            child: const Text('Retry'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
                 }
 
                 final list = provider.trendingPodcasts;
+                
+                // Debug logging
+                debugPrint('📊 Trending podcasts count: ${list.length}');
+                debugPrint('📊 Is loading: ${provider.isLoading}');
+                debugPrint('📊 Error: ${provider.error}');
+                
+                // Show empty state
+                if (list.isEmpty) {
+                  debugPrint('⚠️ Trending podcasts list is empty');
+                  return Padding(
+                    padding: EdgeInsets.all(16.w),
+                    child: Center(
+                      child: Column(
+                        children: [
+                          Text(
+                            'No trending podcasts available',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                          SizedBox(height: 8.h),
+                          TextButton(
+                            onPressed: () {
+                              debugPrint('🔄 Retrying to fetch trending podcasts...');
+                              provider.fetchTrendingPodcasts();
+                            },
+                            child: const Text('Retry'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }
+
                 final hasImages = list.any((p) => p.imageUrl.isNotEmpty);
+                debugPrint('📊 Has images: $hasImages');
+                debugPrint('📊 First podcast: ${list.first.title}');
 
                 // ✅ Horizontal cards if podcasts have images
                 if (hasImages) {
                   return SizedBox(
-                    height: 180.h,
+                    height: kIsWeb ? 200.0 : 180.h,
                     child: ListView.separated(
-                      padding: EdgeInsets.symmetric(horizontal: 16.w),
+                      padding: EdgeInsets.symmetric(horizontal: kIsWeb ? 16.0 : 16.w),
                       scrollDirection: Axis.horizontal,
                       itemCount: list.length,
-                      separatorBuilder: (_, __) => SizedBox(width: 12.w),
+                      separatorBuilder: (_, __) => SizedBox(width: kIsWeb ? 12.0 : 12.w),
                       itemBuilder: (context, index) {
                         final p = list[index];
-                        return _PodcastCard(
-                          imageUrl: p.imageUrl,
-                          title: p.title,
-                          description: p.publisher,
-                          duration: '${p.totalEpisodes} eps',
-                          onPlay: () => _playPodcast(
-                            context,
-                            podcastId: p.id,
-                            podcastTitle: p.title,
-                            podcastImage: p.imageUrl,
-                          ),
-                          onTap: () {
-                            Navigator.push(
+                        debugPrint('🎨 Rendering podcast card $index: ${p.title}');
+                        return SizedBox(
+                          width: kIsWeb ? 140.0 : 140.w,
+                          height: kIsWeb ? 200.0 : 180.h,
+                          child: _PodcastCard(
+                            imageUrl: p.imageUrl,
+                            title: p.title.isNotEmpty ? p.title : 'Untitled Podcast',
+                            description: p.publisher.isNotEmpty ? p.publisher : 'Unknown Publisher',
+                            duration: '${p.totalEpisodes} eps',
+                            onPlay: () => _playPodcast(
                               context,
-                              MaterialPageRoute(
-                                builder: (_) => PodcastDetailScreen(podcastId: p.id),
-                              ),
-                            );
-                          },
+                              podcastId: p.id,
+                              podcastTitle: p.title,
+                              podcastImage: p.imageUrl,
+                            ),
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => PodcastDetailScreen(podcastId: p.id),
+                                ),
+                              );
+                            },
+                          ),
                         );
                       },
                     ),
@@ -134,15 +183,21 @@ class _HomeScreenState extends State<HomeScreen> {
                     return ListTile(
                       contentPadding: EdgeInsets.zero,
                       title: Text(
-                        p.title,
+                        p.title.isNotEmpty ? p.title : 'Untitled Podcast',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w600),
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: theme.colorScheme.onSurface,
+                        ),
                       ),
                       subtitle: Text(
-                        p.publisher,
+                        p.publisher.isNotEmpty ? p.publisher : 'Unknown Publisher',
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
                       ),
                       trailing: IconButton(
                         icon: const Icon(Icons.play_circle_fill),
@@ -189,18 +244,31 @@ class _HomeScreenState extends State<HomeScreen> {
                         final p = podcasts.podcasts[index % (podcasts.podcasts.isEmpty ? 1 : podcasts.podcasts.length)];
                         return _PodcastCard(
                           imageUrl: p.imageUrl,
-                          title: p.title,
-                          description: p.publisher,
+                          title: p.title.isNotEmpty ? p.title : 'Untitled Podcast',
+                          description: p.publisher.isNotEmpty ? p.publisher : 'Unknown Publisher',
                           duration: '${p.totalEpisodes} eps',
                           onPlay: () => _playPodcast(context, podcastId: p.id, podcastTitle: p.title, podcastImage: p.imageUrl),
-                          onTap: () {
+                          onTap: () async {
+                            showDialog(
+                              context: context,
+                              barrierDismissible: false,
+                              builder: (_) => const Center(child: CircularProgressIndicator()),
+                            );
+
+                            final provider = Provider.of<PodcastProvider>(context, listen: false);
+                            debugPrint("➡ Fetch podcast: ${p.id}");
+                            debugPrint("🎧 Episodes loaded: ${provider.episodes.length}");
+                            debugPrint("⚠ Error: ${provider.detailError}");
+                            await provider.fetchPodcastById(p.id);
+
+                            Navigator.pop(context); // close loader
+
                             Navigator.push(
                               context,
-                              MaterialPageRoute(
-                                builder: (_) => PodcastDetailScreen(podcastId: p.id),
-                              ),
+                              MaterialPageRoute(builder: (_) => PodcastDetailScreen(podcastId: p.id)),
                             );
                           },
+
                         );
                       },
                     ),
@@ -212,36 +280,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildCategories(ThemeData theme) {
-    return SizedBox(
-      height: 40.h,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: _categories.length,
-        padding: EdgeInsets.only(right: 16.w),
-        separatorBuilder: (_, __) => SizedBox(width: 8.w),
-        itemBuilder: (context, index) {
-          final bool selected = index == _selectedCategoryIndex;
-          return ChoiceChip(
-            label: Text(_categories[index]),
-            selected: selected,
-            onSelected: (v) {
-              setState(() => _selectedCategoryIndex = index);
-              context.read<PodcastProvider>().searchPodcasts(_categories[index]);
-            },
-            selectedColor: theme.colorScheme.primary.withOpacity(0.12),
-            labelStyle: TextStyle(
-              color: selected ? theme.colorScheme.primary : theme.colorScheme.onSurface,
-              fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-            ),
-            side: BorderSide(color: theme.colorScheme.outlineVariant),
-            backgroundColor: theme.colorScheme.surface,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20.r)),
-          );
-        },
-      ),
-    );
-  }
+
 
   Widget _buildSectionHeader(String title) {
     return Padding(
@@ -339,123 +378,136 @@ class _PodcastCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return GestureDetector(
       onTap: onTap,
-      child: SizedBox(
-        width: 160,
-        height: 180,
-        child: Card(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          child: Column(
-            children: [
-              // Image with play button overlay
-              Expanded(
-                flex: 3,
-                child: Stack(
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-                      child: CachedNetworkImage(
-                        imageUrl: imageUrl,
-                        width: 160,
-                        height: double.infinity,
-                        fit: BoxFit.cover,
-                        placeholder: (_, __) => Container(
-                          width: 160,
-                          height: double.infinity,
-                          color: Colors.grey.shade300,
-                          child: const Center(
-                            child: CircularProgressIndicator(strokeWidth: 2),
+      child: Card(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(kIsWeb ? 10.0 : 12.0)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Image with play button overlay
+            Expanded(
+              flex: 3,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(kIsWeb ? 10.0 : 12.0)),
+                    child: imageUrl.isNotEmpty
+                        ? CachedNetworkImage(
+                            imageUrl: imageUrl,
+                            width: double.infinity,
+                            height: double.infinity,
+                            fit: BoxFit.cover,
+                            placeholder: (_, __) => Container(
+                              width: double.infinity,
+                              height: double.infinity,
+                              color: Colors.grey.shade300,
+                              child: const Center(
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                            ),
+                            errorWidget: (_, __, ___) => Container(
+                              width: double.infinity,
+                              height: double.infinity,
+                              color: Colors.grey.shade300,
+                              child: Icon(Icons.podcasts_rounded, size: 40, color: Colors.grey.shade600),
+                            ),
+                          )
+                        : Container(
+                            width: double.infinity,
+                            height: double.infinity,
+                            color: Colors.grey.shade300,
+                            child: Icon(Icons.podcasts_rounded, size: 40, color: Colors.grey.shade600),
                           ),
+                  ),
+                  // Play button positioned at bottom right of image
+                  Positioned(
+                    bottom: 8,
+                    right: 8,
+                    child: GestureDetector(
+                      onTap: onPlay,
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.primary,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.3),
+                              blurRadius: 4,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
                         ),
-                        errorWidget: (_, __, ___) => Container(
-                          width: 160,
-                          height: double.infinity,
-                          color: Colors.grey.shade300,
-                          child: const Icon(Icons.podcasts_rounded, size: 40),
+                        child: const Icon(
+                          Icons.play_arrow,
+                          size: 16,
+                          color: Colors.white,
                         ),
                       ),
                     ),
-                    // Play button positioned at bottom right of image
-                    Positioned(
-                      bottom: 8,
-                      right: 8,
-                      child: GestureDetector(
-                        onTap: onPlay,
-                        child: Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.primary,
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.3),
-                                blurRadius: 4,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          child: const Icon(
-                            Icons.play_arrow,
-                            size: 16,
-                            color: Colors.white,
-                          ),
+                  ),
+                ],
+              ),
+            ),
+            
+            // Text content area
+            Expanded(
+              flex: 2,
+              child: Container(
+                width: double.infinity,
+                padding: EdgeInsets.all(kIsWeb ? 6.0 : 8.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    // Podcast title with ellipsis
+                    Flexible(
+                      flex: 2,
+                      child: Text(
+                        title.isNotEmpty ? title : 'Untitled Podcast',
+                        maxLines: kIsWeb ? 2 : 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          fontSize: kIsWeb ? 11.0 : 12.0,
+                          height: 1.2,
+                          color: theme.colorScheme.onSurface,
                         ),
+                      ),
+                    ),
+                    SizedBox(height: kIsWeb ? 2.0 : 2),
+                    // Publisher/subtitle with ellipsis
+                    Flexible(
+                      flex: 1,
+                      child: Text(
+                        description.isNotEmpty ? description : 'Unknown Publisher',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontSize: kIsWeb ? 9.0 : 10.0,
+                          color: theme.colorScheme.onSurfaceVariant,
+                          height: 1.2,
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: kIsWeb ? 2.0 : 4),
+                    // Duration at bottom
+                    Text(
+                      duration,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontSize: kIsWeb ? 8.5 : 9.0,
+                        color: theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],
                 ),
               ),
-              
-              // Text content area
-              Expanded(
-                flex: 2,
-                child: Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Podcast title with ellipsis
-                      Flexible(
-                        child: Text(
-                          title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      // Publisher/subtitle with ellipsis
-                      Flexible(
-                        child: Text(
-                          description,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 10,
-                            color: Colors.grey,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      // Duration at bottom
-                      Text(
-                        duration,
-                        style: const TextStyle(
-                          fontSize: 9,
-                          color: Colors.grey,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

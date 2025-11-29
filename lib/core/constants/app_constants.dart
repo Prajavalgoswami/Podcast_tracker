@@ -12,7 +12,7 @@ class AppConstants {
 
   // API Configuration (Listen Notes API)
   static const String listenNotesBaseUrl = 'https://listen-api.listennotes.com/api/v2';
-  static const String listenNotesApiKey = 'c33f2782e43948828c22ebca101e2a0e'; // Replace with your actual API key
+  static const String listenNotesApiKey = 'c33f2782e43948828c22ebca101e2a0e'; // Replace with your new Listen Notes API key
 
   // App Settings
   static const String appName = 'Podcast Tracker';

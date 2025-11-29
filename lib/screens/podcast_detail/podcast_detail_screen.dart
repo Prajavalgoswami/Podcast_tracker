@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:flutter_html/flutter_html.dart'; // for parsing description
+import 'package:flutter_html/flutter_html.dart';
 import 'package:provider/provider.dart';
+import 'dart:ui' as ui;
 import '../../widgets/episodes_list.dart';
 import '../../models/podcast_models.dart';
 import '../../providers/audio_provider.dart';
@@ -11,8 +13,7 @@ import '../../providers/auth_provider.dart';
 import '../../core/services/local_storage_service.dart';
 
 class PodcastDetailScreen extends StatefulWidget {
-  const PodcastDetailScreen({Key? key, required this.podcastId})
-      : super(key: key);
+  const PodcastDetailScreen({super.key, required this.podcastId});
 
   final String podcastId;
 
@@ -28,16 +29,31 @@ class _PodcastDetailScreenState extends State<PodcastDetailScreen>
 
   final LocalStorageService _localStorage = LocalStorageService();
 
+  bool _hasRequestedDetail = false;
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+  }
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final provider = context.read<PodcastProvider>();
-      provider.getPodcastDetails(widget.podcastId).then((_) {
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_hasRequestedDetail) return;
+    _hasRequestedDetail = true;
+
+    final provider = context.read<PodcastProvider>();
+
+    // Always fetch to ensure we have the correct podcast data
+    // This handles the case where we navigate from one podcast to another
+    provider.fetchPodcastById(widget.podcastId).then((_) {
+      if (!mounted) return;
+      // Verify the fetched podcast matches before initializing
+      if (provider.selectedPodcast?.id == widget.podcastId) {
         _initializeFavoriteState();
-      });
+        _precacheImage(provider.selectedPodcast);
+      }
     });
   }
 
@@ -51,6 +67,13 @@ class _PodcastDetailScreenState extends State<PodcastDetailScreen>
     if (userId != null) {
       _isFavorite = _localStorage.isFavorite(userId, podcast.id);
       setState(() {});
+    }
+  }
+
+  void _precacheImage(Podcast? podcast) {
+    if (kIsWeb && podcast != null) {
+      final imageUrl = "https://corsproxy.io/?${Uri.encodeComponent(podcast.imageUrl)}";
+      precacheImage(NetworkImage(imageUrl), context);
     }
   }
 
@@ -68,9 +91,7 @@ class _PodcastDetailScreenState extends State<PodcastDetailScreen>
 
     setState(() => _isFavorite = !_isFavorite);
     if (_isFavorite) {
-      // Save podcast data to local storage
       await _localStorage.savePodcast(podcast);
-      
       final favorite = Favorite(
         id: '${userId}_${podcast.id}',
         userId: userId,
@@ -78,12 +99,21 @@ class _PodcastDetailScreenState extends State<PodcastDetailScreen>
         itemType: 'podcast',
         addedAt: DateTime.now(),
       );
+      // Save to both local storage and Firebase for persistence
       await _localStorage.addToFavorites(favorite);
+      try {
+        final podcastProvider = context.read<PodcastProvider>();
+        await podcastProvider.addToFavorites(userId, podcast.id, 'podcast');
+      } catch (e) {
+        debugPrint('Error saving favorite to Firebase: $e');
+        // Continue even if Firebase fails - local storage is saved
+      }
+      if (!mounted) return;
       _showSnackBar(context, 'Added to favorites');
     } else {
       final favorites = _localStorage.getUserFavorites(userId);
       final fav = favorites.firstWhere(
-        (f) => f.itemId == podcast.id && f.itemType == 'podcast',
+            (f) => f.itemId == podcast.id && f.itemType == 'podcast',
         orElse: () => Favorite(
           id: '',
           userId: userId,
@@ -92,11 +122,16 @@ class _PodcastDetailScreenState extends State<PodcastDetailScreen>
           addedAt: DateTime.now(),
         ),
       );
-      if (fav.id.isNotEmpty) {
-        await _localStorage.removeFromFavorites(fav.id);
-      } else {
-        await _localStorage.removeFromFavorites('${userId}_${podcast.id}');
+      final favoriteId = fav.id.isNotEmpty ? fav.id : '${userId}_${podcast.id}';
+      await _localStorage.removeFromFavorites(favoriteId);
+      try {
+        // Remove from Firebase as well
+        final podcastProvider = context.read<PodcastProvider>();
+        await podcastProvider.removeFromFavorites(userId, podcast.id);
+      } catch (e) {
+        debugPrint('Error removing favorite from Firebase: $e');
       }
+      if (!mounted) return;
       _showSnackBar(context, 'Removed from favorites');
     }
   }
@@ -124,148 +159,237 @@ class _PodcastDetailScreenState extends State<PodcastDetailScreen>
         }
 
         final podcast = provider.selectedPodcast;
-        if (podcast == null) {
-          return const Scaffold(
-            body: Center(child: Text('Podcast not found')),
+        // Ensure we're showing the correct podcast for this screen
+        if (podcast == null || podcast.id != widget.podcastId) {
+          // Still loading or wrong podcast - show loading or error
+          if (provider.isLoadingDetail) {
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            );
+          }
+          return Scaffold(
+            body: Center(
+              child: podcast == null
+                  ? const Text('Podcast not found')
+                  : const Text('Loading podcast details...'),
+            ),
           );
         }
 
         final episodes = provider.episodes;
         final theme = Theme.of(context);
 
+        final imageUrl = kIsWeb
+            ? "https://corsproxy.io/?${Uri.encodeComponent(podcast.imageUrl)}"
+            : podcast.imageUrl;
+
         return Scaffold(
-          backgroundColor: theme.colorScheme.background,
+          backgroundColor: theme.colorScheme.surface,
           body: NestedScrollView(
             headerSliverBuilder: (context, innerBoxIsScrolled) => [
-              SliverAppBar(
-                pinned: true,
-                expandedHeight: 300.h,
-                leading: IconButton(
-                  icon: Icon(Icons.arrow_back_rounded, size: 24.sp),
-                  onPressed: () => Navigator.of(context).pop(),
-                ),
-                actions: [
-                  IconButton(
-                    tooltip:
-                        _isFavorite ? 'Remove from favorites' : 'Add to favorites',
-                    icon: Icon(
-                      _isFavorite
-                          ? Icons.favorite_rounded
-                          : Icons.favorite_border_rounded,
-                      color: _isFavorite
-                          ? theme.colorScheme.error
-                          : theme.colorScheme.onSurface,
-                      size: 24.sp,
-                    ),
-                    onPressed: _toggleFavorite,
-                  ),
-                  IconButton(
-                    tooltip: 'Share',
-                    icon: Icon(Icons.share_rounded, size: 24.sp),
-                    onPressed: () async {
-                      final shareText =
-                          'Check out this podcast: ${podcast.title}';
-                      await Clipboard.setData(ClipboardData(text: shareText));
-                      if (!mounted) return;
-                      _showSnackBar(
-                          context, 'Podcast details copied to clipboard');
+              SliverOverlapAbsorber(
+                handle:
+                NestedScrollView.sliverOverlapAbsorberHandleFor(context),
+                sliver: SliverAppBar(
+                  pinned: true,
+                  expandedHeight: 300.h,
+                  backgroundColor: theme.colorScheme.surface,
+                  automaticallyImplyLeading: false,
+                  flexibleSpace: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final double expandedHeight = 300.h;
+                      final double t = ((constraints.maxHeight - kToolbarHeight) /
+                          (expandedHeight - kToolbarHeight))
+                          .clamp(0.0, 1.0);
+
+                      final double collapsedSize = kIsWeb ? 16.0 : 16.sp;
+                      final double expandedSize = kIsWeb ? 22.0 : 28.sp;
+                      final double fontSize =
+                          ui.lerpDouble(collapsedSize, expandedSize, t) ?? collapsedSize;
+
+                      final double minBottomPadding = 8.h;
+                      final double maxBottomPadding = 48.h;
+                      final double bottomPadding =
+                          ui.lerpDouble(minBottomPadding, maxBottomPadding, t) ?? minBottomPadding;
+
+                      return Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          Hero(
+                            tag: 'podcast_${podcast.id}',
+                            child: Image.network(
+                              imageUrl,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) =>
+                              const Icon(Icons.podcasts, size: 80),
+                            ),
+                          ),
+                          Container(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  Colors.black.withValues(alpha: 0.4),
+                                  Colors.transparent,
+                                  Colors.black.withValues(alpha: 0.6),
+                                ],
+                              ),
+                            ),
+                          ),
+                          SafeArea(
+                            child: Padding(
+                              padding:
+                              EdgeInsets.symmetric(horizontal: 8.w, vertical: 8.h),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  IconButton(
+                                    icon: Icon(Icons.arrow_back_rounded,
+                                        size: 26.sp, color: Colors.white),
+                                    onPressed: () => Navigator.of(context).pop(),
+                                  ),
+                                  Row(
+                                    children: [
+                                      IconButton(
+                                        tooltip: _isFavorite
+                                            ? 'Remove from favorites'
+                                            : 'Add to favorites',
+                                        icon: Icon(
+                                          _isFavorite
+                                              ? Icons.favorite_rounded
+                                              : Icons.favorite_border_rounded,
+                                          color: _isFavorite
+                                              ? theme.colorScheme.error
+                                              : Colors.white,
+                                          size: 24.sp,
+                                        ),
+                                        onPressed: _toggleFavorite,
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            left: 16.w,
+                            right: 16.w,
+                            bottom: bottomPadding,
+                            child: Text(
+                              podcast.title,
+                              textAlign: TextAlign.center,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.titleLarge?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: fontSize,
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
                     },
                   ),
-                ],
-                flexibleSpace: FlexibleSpaceBar(
-                  titlePadding:
-                      EdgeInsetsDirectional.only(start: 16.w, bottom: 12.h, end: 16.w),
-                  title: Text(
-                    podcast.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  bottom: TabBar(
+                    controller: _tabController,
+                    tabs: const [
+                      Tab(text: 'Episodes'),
+                      Tab(text: 'About'),
+                    ],
                   ),
-                  background: Hero(
-                    tag: 'podcast_${podcast.id}',
-                    child: Image.network(
-                      podcast.imageUrl,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const Icon(Icons.podcasts, size: 80),
-                    ),
-                  ),
-                ),
-                bottom: TabBar(
-                  controller: _tabController,
-                  tabs: const [
-                    Tab(text: 'Episodes'),
-                    Tab(text: 'About'),
-                  ],
                 ),
               ),
             ],
             body: TabBarView(
               controller: _tabController,
               children: [
-                // Episodes tab
-                EpisodesList(
-                  episodes: episodes,
-                  onFavorite: (ep, fav) async {
-                    _showSnackBar(
-                        context, fav ? 'Added to favorites' : 'Removed from favorites');
-                  },
-                  onShare: (ep) async {
-                    await Clipboard.setData(ClipboardData(text: 'Listen: ${ep.title}'));
-                    if (!mounted) return;
-                    _showSnackBar(context, 'Episode link copied');
+                Builder(
+                  builder: (context) {
+                    return EpisodesList(
+                      episodes: episodes,
+                      useOverlapInjector: true,
+                      onFavorite: (ep, fav) async {
+                        _showSnackBar(
+                            context,
+                            fav
+                                ? 'Added to favorites'
+                                : 'Removed from favorites');
+                      },
+                      onShare: (ep) async {
+                        await Clipboard.setData(
+                            ClipboardData(text: 'Listen: ${ep.title}'));
+                        if (!mounted) return;
+                        _showSnackBar(context, 'Episode link copied');
+                      },
+                    );
                   },
                 ),
-
-                // About tab
-                SingleChildScrollView(
-                  padding: EdgeInsets.all(16.w),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Podcast Info Section
-                      Text(
-                        'Podcast Information',
-                        style: theme.textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 18.sp,
+                Builder(
+                  builder: (context) {
+                    return CustomScrollView(
+                      slivers: [
+                        SliverOverlapInjector(
+                          handle: NestedScrollView
+                              .sliverOverlapAbsorberHandleFor(context),
                         ),
-                      ),
-                      SizedBox(height: 12.h),
-                      
-                      _buildInfoRow('Publisher', podcast.publisher),
-                      _buildInfoRow('Language', podcast.language),
-                      _buildInfoRow('Total Episodes', podcast.totalEpisodes.toString()),
-                      _buildInfoRow('Categories', podcast.genres.join(', ')),
-                      
-                      SizedBox(height: 20.h),
-                      
-                      // About Section
-                      Text(
-                        'About',
-                        style: theme.textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 18.sp,
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: EdgeInsets.all(16.w),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Podcast Information',
+                                  style:
+                                  theme.textTheme.titleLarge?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 18.sp,
+                                  ),
+                                ),
+                                SizedBox(height: 12.h),
+                                _buildInfoRow('Publisher', podcast.publisher),
+                                _buildInfoRow('Language', podcast.language),
+                                _buildInfoRow('Total Episodes',
+                                    podcast.totalEpisodes.toString()),
+                                _buildInfoRow(
+                                    'Categories', podcast.genres.join(', ')),
+                                SizedBox(height: 20.h),
+                                Text(
+                                  'About',
+                                  style:
+                                  theme.textTheme.titleLarge?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 18.sp,
+                                  ),
+                                ),
+                                SizedBox(height: 12.h),
+                                Html(data: podcast.description),
+                                SizedBox(height: 20.h),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: ElevatedButton.icon(
+                                    icon: const Icon(Icons.play_arrow_rounded),
+                                    label: const Text('Play All'),
+                                    onPressed: episodes.isEmpty
+                                        ? null
+                                        : () async {
+                                      final audioProvider = context.read<AudioProvider>();
+                                      await audioProvider.playPlaylist(episodes, 0);
+                                      if (!mounted) return;
+                                      _showSnackBar(context,
+                                          'Playing all from latest');
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
-                      ),
-                      SizedBox(height: 12.h),
-                      Html(data: podcast.description), // parse HTML nicely
-                      SizedBox(height: 20.h),
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          icon: const Icon(Icons.play_arrow_rounded),
-                          label: const Text('Play All'),
-                          onPressed: episodes.isEmpty
-                              ? null
-                              : () {
-                                  context
-                                      .read<AudioProvider>()
-                                      .playEpisode(episodes.first);
-                                  _showSnackBar(context, 'Playing all from latest');
-                                },
-                        ),
-                      ),
-                    ],
-                  ),
+                      ],
+                    );
+                  },
                 ),
               ],
             ),
@@ -287,7 +411,10 @@ class _PodcastDetailScreenState extends State<PodcastDetailScreen>
               '$label:',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 fontWeight: FontWeight.w500,
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurface
+                    .withValues(alpha: 0.7),
               ),
             ),
           ),

@@ -1,12 +1,15 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../core/services/firebase_service.dart';
 import '../core/services/local_storage_service.dart';
 import '../models/podcast_models.dart';
+import 'audio_provider.dart';
 
 class AuthProvider with ChangeNotifier {
   final FirebaseService _firebaseService = FirebaseService();
   final LocalStorageService _localStorage = LocalStorageService();
+  AudioProvider? _audioProvider;
 
   User? _user;
   UserProfile? _userProfile;
@@ -32,11 +35,27 @@ class AuthProvider with ChangeNotifier {
       _user = user;
       if (user != null) {
         await _loadUserProfile(user.uid);
+        // Sync favorites from Firebase when user logs in
+        await _syncFavoritesFromFirebase(user.uid);
       } else {
         _userProfile = null;
       }
       notifyListeners();
     });
+  }
+
+  // Sync favorites from Firebase to local storage
+  Future<void> _syncFavoritesFromFirebase(String userId) async {
+    try {
+      final firebaseFavorites = await _firebaseService.getUserFavorites(userId);
+      // Sync each favorite to local storage
+      for (final favorite in firebaseFavorites) {
+        await _localStorage.addToFavorites(favorite);
+      }
+    } catch (e) {
+      debugPrint('Error syncing favorites from Firebase: $e');
+      // Continue even if sync fails
+    }
   }
 
   // Sign up with email
@@ -132,6 +151,11 @@ class AuthProvider with ChangeNotifier {
   Future<void> signOut() async {
     _setLoading(true);
     try {
+      // Pause audio playback before signing out
+      if (_audioProvider != null) {
+        await _audioProvider!.pause();
+      }
+      
       await _firebaseService.signOut();
       await _localStorage.clearAllData();
       _user = null;
@@ -246,5 +270,10 @@ class AuthProvider with ChangeNotifier {
 
   void clearError() {
     _clearError();
+  }
+
+  // Set audio provider reference for auto-pause on logout
+  void setAudioProvider(AudioProvider audioProvider) {
+    _audioProvider = audioProvider;
   }
 }

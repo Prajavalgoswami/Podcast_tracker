@@ -55,15 +55,28 @@ class PodcastProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      _podcasts = await _apiService.searchPodcasts(
-        query: query,
-        language: _selectedLanguage,
-      );
-      
-      // Save to local storage
-      for (final podcast in _podcasts) {
-        await _localStorage.savePodcast(podcast);
+      // Search Hindi and English, then merge unique by id (Listen Notes doesn't support region for search)
+      final List<Podcast> results = [];
+      final seen = <String>{};
+
+      Future<void> addAll(List<Podcast> items) async {
+        for (final p in items) {
+          if (seen.add(p.id)) {
+            results.add(p);
+            await _localStorage.savePodcast(p);
+          }
+        }
       }
+
+      // English
+      final en = await _apiService.searchPodcasts(query: query, language: 'en');
+      await addAll(en);
+      // Hindi
+      final hi = await _apiService.searchPodcasts(query: query, language: 'hi');
+      await addAll(hi);
+
+      _podcasts = results;
+      
     } catch (e) {
       debugPrint('Error searching podcasts: $e');
       _podcasts = [];
@@ -73,22 +86,103 @@ class PodcastProvider extends ChangeNotifier {
     }
   }
 
+  bool _isSupportedLanguage(String? language) {
+  final lang = (language ?? '').toLowerCase().trim();
+
+  if (lang.isEmpty) return false;
+
+  // Accept English variations
+  if (lang.startsWith('en')) return true;
+
+  // Accept Hindi variations
+  if (lang.startsWith('hi')) return true;
+  if (lang.contains('hindi')) return true;
+
+  return false;
+}
+
+
   // Fetch Trending Podcasts
   Future<void> fetchTrendingPodcasts() async {
+  _isLoading = true;
+  _error = null;
+  notifyListeners();
+
+  try {
+    final fetched = await _apiService.getBestPodcasts(region: 'in');
+    debugPrint('📊 Fetched ${fetched.length} trending podcasts');
+
+    // Filter only English + Hindi podcasts
+    _trendingPodcasts = fetched.where((podcast) {
+      final lang = podcast.language.toLowerCase().trim();
+
+      // English variations
+      if (lang.startsWith('en')) return true;
+
+      // Hindi variations
+      if (lang.startsWith('hi')) return true;
+      if (lang.contains('hindi')) return true;
+
+      return false;  // remove others
+    }).toList();
+
+    debugPrint("✅ Trending after filter: ${_trendingPodcasts.length}");
+
+    if (_trendingPodcasts.isNotEmpty) {
+      debugPrint('📊 First podcast: ${_trendingPodcasts.first.title}');
+    }
+
+    // Save to local storage
+    for (final podcast in _trendingPodcasts) {
+      try {
+        await _localStorage.savePodcast(podcast);
+      } catch (e) {
+        debugPrint('Error saving podcast ${podcast.id}: $e');
+      }
+    }
+  } catch (e) {
+    debugPrint('❌ Error fetching trending podcasts: $e');
+    _trendingPodcasts = [];
+    _error = e.toString();
+  } finally {
+    _isLoading = false;
+    notifyListeners();
+  }
+}
+
+
+  // Curated Indian podcasts for target genres
+  Future<void> fetchIndianEducationScienceEnvironment() async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
-      _trendingPodcasts = await _apiService.getBestPodcasts(region: 'us');
+      // Resolve genre IDs dynamically from API
+      final genres = await _apiService.getGenres();
+      final wantedNames = <String>{'education', 'science', 'environment', 'environmental'};
+      final wanted = genres.where((g) {
+        final name = (g['name'] ?? '').toString().toLowerCase();
+        return wantedNames.any((w) => name.contains(w));
+      }).map((g) => g['id'].toString()).toList();
 
-      // Save to local storage
-      for (final podcast in _trendingPodcasts) {
-        await _localStorage.savePodcast(podcast);
+      final aggregated = <Podcast>[];
+      final seen = <String>{};
+      for (final genreId in wanted) {
+        final list = await _apiService.getBestPodcasts(genreId: genreId, region: 'in');
+        for (final p in list) {
+          // Filter to show supported languages (English + Hindi)
+          if (_isSupportedLanguage(p.language) && seen.add(p.id)) {
+            aggregated.add(p);
+            await _localStorage.savePodcast(p);
+          }
+        }
       }
+
+      _podcasts = aggregated;
     } catch (e) {
-      debugPrint('Error fetching trending podcasts: $e');
-      _trendingPodcasts = [];
+      debugPrint('Error fetching curated Indian podcasts: $e');
+      _podcasts = [];
       _error = e.toString();
     } finally {
       _isLoading = false;
@@ -103,10 +197,13 @@ class PodcastProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      _podcasts = await _apiService.getBestPodcasts(
+      final fetched = await _apiService.getBestPodcasts(
         genreId: genreId,
-        region: 'us',
+        region: 'in',
       );
+      
+      // Filter to show supported languages (English + Hindi)
+      _podcasts = fetched.where((podcast) => _isSupportedLanguage(podcast.language)).toList();
       
       // Save to local storage
       for (final podcast in _podcasts) {
@@ -129,26 +226,80 @@ class PodcastProvider extends ChangeNotifier {
 
   // New: Explicitly fetch a podcast by ID and store as selected with episodes
   Future<void> fetchPodcastById(String podcastId) async {
-    _isLoadingDetail = true;
-    _detailError = null;
-    notifyListeners();
+    final isDifferentPodcast = _selectedPodcast?.id != podcastId;
 
+    // Always clear state first if it's a different podcast to prevent showing wrong data
+    if (isDifferentPodcast) {
+      _selectedPodcast = null;
+      _episodes = [];
+      _detailError = null;
+      _isLoadingDetail = true;
+      notifyListeners();
+      // Small delay to ensure UI updates with cleared state
+      await Future.delayed(const Duration(milliseconds: 50));
+    } else {
+      // Same podcast, but still update loading state
+      _isLoadingDetail = true;
+      _detailError = null;
+      notifyListeners();
+    }
+
+    // First, try to load from local storage for immediate display
+    final cachedPodcast = _localStorage.getPodcast(podcastId);
+    final cachedEpisodes = _localStorage.getEpisodesByPodcast(podcastId);
+    
+    // Only set cached data if it matches the requested podcastId
+    if (cachedPodcast != null && cachedPodcast.id == podcastId) {
+      _selectedPodcast = cachedPodcast;
+      _episodes = cachedEpisodes;
+      _isLoadingDetail = false;
+      notifyListeners();
+    }
+
+    // Then try to fetch from API to get fresh data
     try {
       final result = await _apiService.getPodcastById(podcastId: podcastId);
-      if (result.isNotEmpty) {
-        _selectedPodcast = result['podcast'] as Podcast;
-        _episodes = result['episodes'] as List<Episode>;
 
-        // Save to local storage
-        await _localStorage.savePodcast(_selectedPodcast!);
-        for (final episode in _episodes) {
-          await _localStorage.saveEpisode(episode);
+      // Double-check that the result matches the requested podcastId
+      if (result.isNotEmpty) {
+        final fetchedPodcast = result['podcast'] as Podcast;
+        final fetchedEpisodes = result['episodes'] as List<Episode>;
+        
+        // Only update if this is still the podcast we're requesting
+        if (fetchedPodcast.id == podcastId) {
+          _selectedPodcast = fetchedPodcast;
+          _episodes = fetchedEpisodes;
         }
       }
     } catch (e) {
-      debugPrint('Error getting podcast details: $e');
-      _episodes = [];
-      _detailError = e.toString();
+      // Retry ONCE in case of network error
+      await Future.delayed(const Duration(milliseconds: 400));
+
+      try {
+        final result = await _apiService.getPodcastById(podcastId: podcastId);
+
+        if (result.isNotEmpty) {
+          final fetchedPodcast = result['podcast'] as Podcast;
+          final fetchedEpisodes = result['episodes'] as List<Episode>;
+          
+          // Only update if this is still the podcast we're requesting
+          if (fetchedPodcast.id == podcastId) {
+            _selectedPodcast = fetchedPodcast;
+            _episodes = fetchedEpisodes;
+          }
+        }
+      } catch (err) {
+        // Final fallback: use cached data only if it matches
+        if (cachedPodcast != null && cachedPodcast.id == podcastId) {
+          _selectedPodcast = cachedPodcast;
+          _episodes = cachedEpisodes;
+        } else {
+          _selectedPodcast = null;
+          _episodes = [];
+        }
+
+        _detailError = err.toString();
+      }
     } finally {
       _isLoadingDetail = false;
       notifyListeners();
@@ -158,10 +309,19 @@ class PodcastProvider extends ChangeNotifier {
   // Get User Favorites
   Future<void> getUserFavorites(String userId) async {
     try {
-      final favorites = await _firebaseService.getUserFavorites(userId);
+      // First try to get from Firebase (cloud sync)
+      final firebaseFavorites = await _firebaseService.getUserFavorites(userId);
+      
+      // Sync Firebase favorites to local storage
+      for (final favorite in firebaseFavorites) {
+        await _localStorage.addToFavorites(favorite);
+      }
+      
+      // Now load from local storage (includes synced favorites)
+      final localFavorites = _localStorage.getUserFavorites(userId);
       _favorites = [];
       
-      for (final favorite in favorites) {
+      for (final favorite in localFavorites) {
         if (favorite.itemType == 'podcast') {
           final podcast = _localStorage.getPodcast(favorite.itemId);
           if (podcast != null) {
@@ -173,6 +333,18 @@ class PodcastProvider extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       debugPrint('Error getting user favorites: $e');
+      // Fallback to local storage only
+      final localFavorites = _localStorage.getUserFavorites(userId);
+      _favorites = [];
+      for (final favorite in localFavorites) {
+        if (favorite.itemType == 'podcast') {
+          final podcast = _localStorage.getPodcast(favorite.itemId);
+          if (podcast != null) {
+            _favorites.add(podcast);
+          }
+        }
+      }
+      notifyListeners();
     }
   }
 

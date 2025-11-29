@@ -1,4 +1,7 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
+import 'dart:async';
+import 'dart:math';
 import '../constants/app_constants.dart';
 import '../../models/podcast_models.dart';
 
@@ -8,6 +11,16 @@ class ApiService {
   ApiService._internal();
 
   late Dio _dio;
+  
+  // Rate limiting and retry configuration
+  static const int _maxRetries = 3;
+  static const Duration _baseDelay = Duration(seconds: 1);
+  static const Duration _maxDelay = Duration(seconds: 30);
+  static const Duration _rateLimitDelay = Duration(minutes: 1);
+  
+  // Request throttling
+  final Map<String, DateTime> _lastRequestTimes = {};
+  static const Duration _minRequestInterval = Duration(milliseconds: 500);
 
   void initialize() {
     _dio = Dio();
@@ -19,12 +32,16 @@ class ApiService {
     _dio.options.connectTimeout = const Duration(seconds: 10);
     _dio.options.receiveTimeout = const Duration(seconds: 30);
 
-    // Add interceptor for logging (optional)
-    _dio.interceptors.add(LogInterceptor(
-      requestBody: true,
-      responseBody: true,
-      logPrint: (obj) => print(obj),
-    ));
+    // Add lightweight logging in debug only (avoid dumping huge payloads)
+    if (kDebugMode) {
+      _dio.interceptors.add(LogInterceptor(
+        requestBody: false,
+        responseBody: false,
+        requestHeader: false,
+        responseHeader: false,
+        logPrint: (obj) => debugPrint(obj.toString()),
+      ));
+    }
   }
 
   // Search Podcasts
@@ -131,12 +148,44 @@ class ApiService {
 
       if (response.statusCode == 200) {
         final data = response.data;
-        final podcasts = data['podcasts'] as List;
-        return podcasts.map((json) => Podcast.fromJson(json)).toList();
+        if (data == null) {
+          debugPrint('⚠️ API response data is null');
+          return [];
+        }
+        
+        final podcasts = data['podcasts'] as List?;
+        if (podcasts == null) {
+          debugPrint('⚠️ No podcasts array in API response');
+          debugPrint('   Response keys: ${data.keys.toList()}');
+          return [];
+        }
+        
+        if (podcasts.isEmpty) {
+          debugPrint('⚠️ Podcasts array is empty');
+          return [];
+        }
+        
+        debugPrint('📡 API returned ${podcasts.length} podcasts');
+        final parsed = <Podcast>[];
+        for (var i = 0; i < podcasts.length; i++) {
+          try {
+            final podcast = Podcast.fromJson(podcasts[i]);
+            parsed.add(podcast);
+          } catch (e) {
+            debugPrint('❌ Error parsing podcast $i: $e');
+          }
+        }
+        debugPrint('✅ Successfully parsed ${parsed.length} podcasts');
+        return parsed;
       }
+      debugPrint('⚠️ API returned status code: ${response.statusCode}');
       return [];
     } on DioException catch (e) {
+      debugPrint('❌ DioException in getBestPodcasts: ${e.message}');
       throw _handleError(e);
+    } catch (e) {
+      debugPrint('❌ Unexpected error in getBestPodcasts: $e');
+      return [];
     }
   }
 

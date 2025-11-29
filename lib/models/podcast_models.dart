@@ -76,6 +76,9 @@ class Podcast extends HiveObject {
   @HiveField(3)
   String imageUrl;
 
+  @HiveField(11)
+  String thumbnailUrl;
+
   @HiveField(4)
   String publisher;
 
@@ -102,6 +105,7 @@ class Podcast extends HiveObject {
     required this.title,
     required this.description,
     required this.imageUrl,
+    required this.thumbnailUrl,
     required this.publisher,
     required this.language,
     required this.genres,
@@ -113,19 +117,26 @@ class Podcast extends HiveObject {
 
   factory Podcast.fromJson(Map<String, dynamic> json) {
     return Podcast(
-      id: json['id'] ?? '',
-      title: json['title'] ?? '',
-      description: json['description'] ?? '',
-      imageUrl: json['image'] ?? json['imageUrl'] ?? '',
-      publisher: json['publisher'] ?? '',
-      language: json['language'] ?? 'en',
-      genres: List<String>.from(json['genres'] ?? []),
+      id: json['id']?.toString() ?? '',
+      title: json['title']?.toString() ?? 'Untitled Podcast',
+      description: json['description']?.toString() ?? '',
+      imageUrl: json['image']?.toString() ?? '',
+      thumbnailUrl: json['thumbnail']?.toString() ?? json['image']?.toString() ?? '',
+      publisher: json['publisher']?.toString() ?? 'Unknown Publisher',
+      language: json['language']?.toString() ?? 'en',
+
+      // ListenNotes gives genre_ids, not "genres"
+      genres: (json['genre_ids'] != null)
+          ? List<int>.from(json['genre_ids']).map((e) => e.toString()).toList()
+          : [],
+
       totalEpisodes: json['total_episodes'] ?? 0,
-      website: json['website'],
+      website: json['website']?.toString(),
       isUserUploaded: json['isUserUploaded'] ?? false,
       uploadedByUserId: json['uploadedByUserId'],
     );
   }
+
 
   Map<String, dynamic> toJson() {
     return {
@@ -133,6 +144,7 @@ class Podcast extends HiveObject {
       'title': title,
       'description': description,
       'imageUrl': imageUrl,
+      'thumbnailUrl': thumbnailUrl,
       'publisher': publisher,
       'language': language,
       'genres': genres,
@@ -188,17 +200,20 @@ class Episode extends HiveObject {
 
   factory Episode.fromJson(Map<String, dynamic> json) {
     return Episode(
-      id: json['id'] ?? '',
-      title: json['title'] ?? '',
-      description: json['description'] ?? '',
-      audioUrl: json['audio'] ?? json['audioUrl'] ?? '',
-      imageUrl: json['image'] ?? json['imageUrl'] ?? '',
+      id: json['id']?.toString() ?? '',
+      title: json['title']?.toString() ?? '',
+      description: json['description']?.toString() ?? '',
+      audioUrl: json['audio']?.toString() ?? '',
+      imageUrl: json['image']?.toString() ?? '',
       audioLengthSec: json['audio_length_sec'] ?? 0,
-      pubDateMs: DateTime.fromMillisecondsSinceEpoch(json['pub_date_ms'] ?? 0),
-      podcastId: json['podcast_id'] ?? json['podcastId'] ?? '',
+      pubDateMs: DateTime.fromMillisecondsSinceEpoch(
+        json['pub_date_ms'] ?? (json['pub_date'] ?? 0),
+      ),
+      podcastId: json['podcast_id']?.toString() ?? '',
       isUserUploaded: json['isUserUploaded'] ?? false,
     );
   }
+
 
   Map<String, dynamic> toJson() {
     return {
